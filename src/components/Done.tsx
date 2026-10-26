@@ -4,6 +4,8 @@ import { fmtDur, MIN } from "../lib/timer";
 import { plantStage, streak, todayMinutes, totalHours } from "../lib/stats";
 import { confetti } from "../lib/fx";
 import Plant from "./Plant";
+import FocusStrip from "./FocusStrip";
+import Timelapse from "./Timelapse";
 
 interface Props {
   session: Session;
@@ -76,6 +78,20 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
           <div><b>{fmtDur(todayAfter * MIN)}</b><span>today</span></div>
           <div><b>{st.days}</b><span>day streak</span></div>
         </div>
+
+        {saved && (session.trace?.length || session.frames) ? (
+          <section className="cam-recap">
+            {!!session.frames && <Timelapse sessionId={session.id} durationMs={session.end - session.start} />}
+            {!!session.trace?.length && <FocusStrip trace={session.trace} />}
+            {session.counts && (
+              <p className="recap-counts">
+                <span>📵 {session.counts.phone} phone {session.counts.phone === 1 ? "pickup" : "pickups"}</span>
+                <span>🪑 {session.counts.posture} posture {session.counts.posture === 1 ? "nudge" : "nudges"}</span>
+                <span>👋 stepped away {session.counts.away}×</span>
+              </p>
+            )}
+          </section>
+        ) : null}
 
         {(hitGoal || grew || streakUp) && (
           <ul className="wins">

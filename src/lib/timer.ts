@@ -44,6 +44,12 @@ export function advance(a: Active, s: Settings, at: number, ideaCount: number): 
   };
 }
 
+/** Ends the current focus round now and starts its break (used by "Break now"). */
+export function breakNow(a: Active, s: Settings, at: number, ideaCount: number): Active {
+  if (a.phase !== "focus" || a.mode !== "pomodoro") return a;
+  return advance({ ...a, phaseDurMs: phaseElapsed(a, at) }, s, at, ideaCount);
+}
+
 export function fmtClock(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const h = Math.floor(total / 3600);

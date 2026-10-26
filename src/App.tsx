@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Active, type Session, type Settings,
   loadActive, loadSessions, loadSettings, saveActive, saveSessions, saveSettings, uid,
 } from "./lib/store";
-import { advance, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed } from "./lib/timer";
+import { advance, breakNow, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed } from "./lib/timer";
+import { type CamEvent, type CamStatus, FocusCamera } from "./lib/camera";
+import { addFrame, deleteFrames } from "./lib/timelapse";
+import Toast, { type ToastData } from "./components/Toast";
 import { breakIdeas } from "./lib/content";
 import { chime, primeAudio, setFavicon } from "./lib/fx";
 import { type Helpers, onExtension, pingExtension, sendSession } from "./lib/bridge";
@@ -26,6 +29,14 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [setupOpen, setSetupOpen] = useState(false);
   const [helpers, setHelpers] = useState<Helpers>({ blocker: false, closer: false });
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const [camStatus, setCamStatus] = useState<CamStatus>({ state: "off", present: false, faceVisible: false });
+  const camRef = useRef<FocusCamera | null>(null);
+  const framesRef = useRef(0);
+  // Camera events arrive outside React, so they act through the latest handlers.
+  const handlers = useRef<{ onCam: (e: CamEvent) => void }>({ onCam: () => {} });
+
+  const showToast = useCallback((t: Omit<ToastData, "id">) => setToast({ ...t, id: Date.now() }), []);
 
   useEffect(() => {
     const off = onExtension(setHelpers);
@@ -46,6 +57,32 @@ export default function App() {
     const id = setInterval(send, 60_000);
     return () => clearInterval(id);
   }, [activeId, activeSubject, activeGoal, activePhase, helpers.blocker]);
+
+  // Camera: on for the whole session if it's switched on in Settings.
+  const camOn = settings.camera;
+  useEffect(() => {
+    if (!activeId || !camOn) return;
+    framesRef.current = 0;
+    const cam = new FocusCamera(
+      settings.cam,
+      (e) => handlers.current.onCam(e),
+      setCamStatus,
+      (blob) => void addFrame(activeId, framesRef.current++, blob),
+    );
+    camRef.current = cam;
+    void cam.start();
+    return () => {
+      cam.stop();
+      if (camRef.current === cam) camRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, camOn]);
+
+  useEffect(() => camRef.current?.setFeatures(settings.cam), [settings.cam]);
+
+  // Detection counts during focus only. While auto-paused it keeps watching for you to come back.
+  const focusing = !!active && active.phase === "focus" && (!active.pausedAt || !!active.autoPaused);
+  useEffect(() => camRef.current?.setFocusing(focusing), [focusing, camStatus.state]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((s) => {
@@ -131,15 +168,44 @@ export default function App() {
     [settings, updateSettings, commitActive],
   );
 
-  const pause = useCallback(() => {
+  const pause = useCallback((auto = false) => {
     if (!active || active.pausedAt) return;
-    commitActive({ ...active, pausedAt: Date.now() });
+    commitActive({ ...active, pausedAt: Date.now(), autoPaused: auto });
   }, [active, commitActive]);
 
   const resume = useCallback(() => {
     if (!active?.pausedAt) return;
-    commitActive({ ...active, pausedMsInPhase: active.pausedMsInPhase + (Date.now() - active.pausedAt), pausedAt: null });
+    commitActive({ ...active, pausedMsInPhase: active.pausedMsInPhase + (Date.now() - active.pausedAt), pausedAt: null, autoPaused: false });
   }, [active, commitActive]);
+
+  const takeBreak = useCallback(() => {
+    if (!active) return;
+    if (settings.sound) chime.breakTime();
+    commitActive(breakNow(active, settings, Date.now(), breakIdeas.length));
+  }, [active, settings, commitActive]);
+
+  handlers.current.onCam = (e: CamEvent) => {
+    if (!active) return;
+    if (e === "away" && !active.pausedAt) {
+      pause(true);
+      showToast({ icon: "👋", text: "Paused while you're away. It picks up when you're back." });
+    } else if (e === "back" && active.autoPaused) {
+      resume();
+      showToast({ icon: "✨", text: "Welcome back. Timer's running again." });
+    } else if (e === "phone") {
+      showToast({ icon: "📵", text: "Phone down? It'll still be there at the break." });
+    } else if (e === "posture") {
+      showToast({ icon: "🪑", text: "Quick posture check. Sit back and drop your shoulders." });
+    } else if (e === "drowsy") {
+      showToast({
+        icon: "😴",
+        text: "You're looking tired. A break might help.",
+        action: active.mode === "pomodoro" && active.phase === "focus" ? { label: "Break now", run: takeBreak } : undefined,
+      });
+    } else if (e === "calibrated") {
+      showToast({ icon: "✅", text: "Got your normal posture. I'll nudge you if you hunch for a while." });
+    }
+  };
 
   const skipBreak = useCallback(() => {
     if (!active || active.phase === "focus") return;
@@ -159,6 +225,12 @@ export default function App() {
       focusMs: focusMs(active, t),
       rounds: active.rounds,
     };
+    const cam = camRef.current;
+    if (cam && cam.status.state === "on") {
+      session.trace = cam.takeTrace();
+      session.counts = { ...cam.counts };
+    }
+    if (framesRef.current) session.frames = framesRef.current;
     const saved = session.focusMs >= MIN;
     const prev = sessions;
     if (saved) {
@@ -168,6 +240,7 @@ export default function App() {
     }
     if (settings.sound) chime.done();
     sendSession(false);
+    setToast(null);
     commitActive(null);
     setDone({ session, saved, prevSessions: prev });
   }, [active, sessions, settings.sound, commitActive]);
@@ -181,6 +254,7 @@ export default function App() {
   }, []);
 
   const deleteSession = useCallback((id: string) => {
+    void deleteFrames(id);
     setSessions((list) => {
       const next = list.filter((s) => s.id !== id);
       saveSessions(next);
@@ -198,8 +272,11 @@ export default function App() {
         settings={settings}
         now={now}
         sessions={sessions}
-        onPause={pause}
+        onPause={() => pause()}
         onResume={resume}
+        camStatus={camStatus}
+        camVideo={camRef.current?.video ?? null}
+        onToggleSelf={() => updateSettings({ showSelf: !settings.showSelf })}
         onSkipBreak={skipBreak}
         onFinish={finish}
       />
@@ -237,6 +314,7 @@ export default function App() {
     <>
       {screen}
       {settingsOpen && <SettingsSheet settings={settings} update={updateSettings} onClose={() => setSettingsOpen(false)} />}
+      <Toast toast={toast} onDone={() => setToast(null)} />
       {setupOpen && <SetupSheet helpers={helpers} onClose={() => setSetupOpen(false)} />}
     </>
   );

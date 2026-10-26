@@ -87,6 +87,33 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
         </section>
 
         <section className="set-group">
+          <h3>Camera</h3>
+          <label className="toggle-row">
+            <span>
+              Use the camera during sessions
+              <small>Everything is worked out inside this browser. No video or photos ever leave this PC.</small>
+            </span>
+            <input id="camera-toggle" type="checkbox" className="toggle" checked={s.camera} onChange={(e) => update({ camera: e.target.checked })} />
+          </label>
+          {s.camera && (
+            <div className="cam-opts">
+              {([
+                ["timelapse", "Time-lapse", "A photo every 10 seconds, played back as a short video"],
+                ["away", "Pause when I leave", "Stops the timer if you're gone for a minute, restarts when you're back"],
+                ["phone", "Phone nudge", "A gentle nudge if you pick up your phone"],
+                ["posture", "Posture reminder", "Only after a few minutes of hunching. Looking down at your iPad is fine"],
+                ["drowsy", "Tired alert", "Suggests a break if you keep yawning or your eyes keep closing"],
+              ] as const).map(([k, title, sub]) => (
+                <label className="toggle-row" key={k}>
+                  <span>{title}<small>{sub}</small></span>
+                  <input id={`cam-${k}`} type="checkbox" className="toggle" checked={s.cam[k]} onChange={(e) => update({ cam: { ...s.cam, [k]: e.target.checked } })} />
+                </label>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="set-group">
           <h3>Daily goal</h3>
           <div className="set-row"><span>Study each day</span><Stepper id="daily-goal" value={s.dailyGoalMin} min={15} max={600} step={15} unit="min" onChange={(v) => update({ dailyGoalMin: v })} /></div>
           <p className="hint">That's {fmtDur(s.dailyGoalMin * MIN)}. Your streak only needs 25 minutes a day.</p>

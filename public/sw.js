@@ -1,5 +1,5 @@
 // Network first, falling back to cache, so the app opens offline after the first visit.
-const CACHE = "lockin-v1";
+const CACHE = "lockin-v2";
 self.addEventListener("install", (e) => { self.skipWaiting(); });
 self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); });
 self.addEventListener("fetch", (e) => {

@@ -1,5 +1,7 @@
 // All data lives in this browser on this PC. Nothing is sent anywhere.
 
+import type { CamFeatures, TracePoint } from "./camera";
+
 export type Mode = "pomodoro" | "flow";
 export type Phase = "focus" | "short" | "long";
 
@@ -23,6 +25,9 @@ export interface Settings {
   lastSubject: string;
   exams: Exam[];
   name: string;
+  camera: boolean;
+  cam: CamFeatures;
+  showSelf: boolean;
 }
 
 export interface Session {
@@ -34,6 +39,9 @@ export interface Session {
   focusMs: number;
   rounds: number;
   rating?: number;
+  trace?: TracePoint[];
+  counts?: { phone: number; posture: number; drowsy: number; away: number };
+  frames?: number;
 }
 
 export interface Active {
@@ -50,6 +58,7 @@ export interface Active {
   focusMsBanked: number;
   rounds: number; // completed focus rounds
   breakIdea: number;
+  autoPaused?: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -66,6 +75,9 @@ export const defaultSettings: Settings = {
   lastSubject: "General",
   exams: [],
   name: "",
+  camera: true,
+  cam: { away: true, phone: true, posture: true, drowsy: true, timelapse: true },
+  showSelf: true,
 };
 
 const K = { settings: "lockin.settings", sessions: "lockin.sessions", active: "lockin.active" };
@@ -88,7 +100,10 @@ function write(key: string, value: unknown) {
   }
 }
 
-export const loadSettings = (): Settings => ({ ...defaultSettings, ...read<Partial<Settings>>(K.settings, {}) });
+export const loadSettings = (): Settings => {
+  const saved = read<Partial<Settings>>(K.settings, {});
+  return { ...defaultSettings, ...saved, cam: { ...defaultSettings.cam, ...saved.cam } };
+};
 export const saveSettings = (s: Settings) => write(K.settings, s);
 export const loadSessions = (): Session[] => read<Session[]>(K.sessions, []);
 export const saveSessions = (s: Session[]) => write(K.sessions, s);

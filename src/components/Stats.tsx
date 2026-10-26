@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { Session, Settings } from "../lib/store";
 import { dayKey, fmtDur, MIN } from "../lib/timer";
 import { minutesByDay, plantStage, startOfWeek, streak, STREAK_MIN, subjectMinutes, totalHours } from "../lib/stats";
 import { subjectHue } from "../lib/content";
 import Plant from "./Plant";
+import Timelapse from "./Timelapse";
 import { IconBack, IconTrash } from "./Icons";
 
 interface Props {
@@ -18,6 +19,7 @@ const dayNames = ["Mon", "", "Wed", "", "Fri", "", "Sun"];
 
 export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<Session | null>(null);
   const now = Date.now();
   const week0 = startOfWeek(now);
   const weekMin = sessions.filter((s) => s.start >= week0).reduce((a, s) => a + s.focusMs / MIN, 0);
@@ -59,6 +61,27 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
   const daysStudied = cells.filter((c) => c.min > 0).length;
   const bestDay = Math.max(0, ...cells.map((c) => c.min));
   const goalDays = cells.filter((c) => c.min >= settings.dailyGoalMin).length;
+  // Focus heatmap: average camera focus score by weekday and hour.
+  const heat = useMemo(() => {
+    const sum = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const n = Array.from({ length: 7 }, () => Array(24).fill(0));
+    for (const ses of sessions) for (const p of ses.trace ?? []) {
+      const d = new Date(p.t);
+      const wd = (d.getDay() + 6) % 7;
+      sum[wd][d.getHours()] += p.s;
+      n[wd][d.getHours()]++;
+    }
+    const cells = sum.map((row, wd) => row.map((v, h) => (n[wd][h] ? v / n[wd][h] : -1)));
+    const used = cells.flat().some((v) => v >= 0);
+    let best = { wd: -1, h: -1, v: -1 };
+    cells.forEach((row, wd) => row.forEach((v, h) => { if (n[wd][h] >= 10 && v > best.v) best = { wd, h, v }; }));
+    const hours = cells[0].map((_, h) => h).filter((h) => cells.some((row) => row[h] >= 0));
+    const lo = hours.length ? Math.max(0, Math.min(...hours) - 1) : 8;
+    const hi = hours.length ? Math.min(23, Math.max(...hours) + 1) : 22;
+    return { cells, used, best, lo, hi };
+  }, [sessions]);
+  const withLapse = [...sessions].filter((x) => x.frames).sort((a, b) => b.start - a.start).slice(0, 9);
+
   const level = (m: number) => (m <= 0 ? 0 : m < STREAK_MIN ? 1 : m < settings.dailyGoalMin / 2 ? 2 : m < settings.dailyGoalMin ? 3 : 4);
   const recent = [...sessions].sort((a, b) => b.start - a.start).slice(0, 12);
   const ratingTrend = [...rated].sort((a, b) => a.start - b.start).slice(-20);
@@ -169,6 +192,54 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
             </section>
           </div>
 
+          {heat.used && (
+            <section className="panel">
+              <h2>When you focus best</h2>
+              <div className="heat-wrap">
+                <div className="heat" style={{ gridTemplateColumns: `36px repeat(${heat.hi - heat.lo + 1}, minmax(18px, 1fr))` }}>
+                  <span />
+                  {Array.from({ length: heat.hi - heat.lo + 1 }, (_, i) => heat.lo + i).map((h) => (
+                    <span key={h} className="heat-h">{h % 3 === 0 ? (h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`) : ""}</span>
+                  ))}
+                  {heat.cells.map((row, wd) => (
+                    <Fragment key={wd}>
+                      <span className="heat-d">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][wd]}</span>
+                      {row.slice(heat.lo, heat.hi + 1).map((v, i) => (
+                        <span
+                          key={`${wd}-${i}`}
+                          className={`heat-c ${v < 0 ? "none" : ""}`}
+                          style={{ "--s": Math.max(0, v) } as React.CSSProperties}
+                          title={v < 0 ? "" : `${Math.round(v * 100)}% focused`}
+                        />
+                      ))}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+              {heat.best.v >= 0 && (
+                <p className="hint">
+                  Your sharpest slot so far: <b>{["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"][heat.best.wd]} around {new Date(2000, 0, 1, heat.best.h).toLocaleTimeString(undefined, { hour: "numeric" })}</b>, at {Math.round(heat.best.v * 100)}% focused.
+                </p>
+              )}
+            </section>
+          )}
+
+          {withLapse.length > 0 && (
+            <section className="panel">
+              <h2>Time-lapses</h2>
+              <div className="lapse-grid">
+                {withLapse.map((x) => (
+                  <button key={x.id} className="lapse-card" onClick={() => setPlaying(x)} style={{ "--hue": subjectHue(x.subject) } as React.CSSProperties}>
+                    <span className="lapse-play" aria-hidden="true">▶</span>
+                    <b>{x.subject}</b>
+                    <small>{new Date(x.start).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} · {fmtDur(x.focusMs)}</small>
+                  </button>
+                ))}
+              </div>
+              <p className="hint">Saved only in this browser on this PC.</p>
+            </section>
+          )}
+
           {ratingTrend.length >= 2 && (
             <section className="panel">
               <h2>How focused you felt</h2>
@@ -199,6 +270,16 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
             </ul>
           </section>
         </main>
+      )}
+      {playing && (
+        <div className="gate" role="dialog" aria-modal="true" aria-label="Time-lapse" onClick={() => setPlaying(null)}>
+          <div className="gate-card lapse-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>{playing.subject}</h2>
+            <p>{new Date(playing.start).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · {fmtDur(playing.focusMs)} focused</p>
+            <Timelapse sessionId={playing.id} durationMs={playing.end - playing.start} />
+            <button className="ghost-btn" onClick={() => setPlaying(null)}>Close</button>
+          </div>
+        </div>
       )}
     </div>
   );
