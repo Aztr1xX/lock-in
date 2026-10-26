@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type CamDebug, type CamStatus, FocusCamera } from "../lib/camera";
 import type { Settings } from "../lib/store";
 import { IconClose } from "./Icons";
+import { drawCam, nice } from "../lib/camDraw";
 
 interface Props {
   /** The running session's camera. Without one, the check starts its own for a quick look. */
@@ -36,15 +37,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
     let raf = 0, last = 0;
     const draw = (t: number) => {
       raf = requestAnimationFrame(draw);
-      const g = canvas.current?.getContext("2d");
-      const v = cam.video;
-      if (!g || v.readyState < 2) return;
-      g.save();
-      g.translate(W, 0);
-      g.scale(-1, 1); // mirror, so it moves like a mirror does
-      g.drawImage(v, 0, 0, W, H);
-      g.restore();
-      overlay(g, cam.debug);
+      if (!canvas.current || !drawCam(canvas.current, cam)) return;
       if (t - last > 250) {
         last = t;
         setDbg({ ...cam.debug });
@@ -63,9 +56,10 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
 
   const on = status.state === "on";
   const phones = dbg?.objects.filter((o) => o.verdict === "phone") ?? [];
+  const things = dbg?.objects.filter((o) => o.verdict !== "you") ?? [];
   const rows: [string, string, "ok" | "warn" | "off"][] = dbg && on
     ? [
-        ["You", dbg.present ? "At your desk" : "Not in view. After a minute this pauses the timer.", dbg.present ? "ok" : "warn"],
+        ["You", dbg.present ? "At your desk" : "Not in view. After 30 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
         ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.posture === "hunched" ? "Hunched. Nudges after 3 minutes of this." : dbg.posture === "good" ? "Good" : "Needs your shoulders in view", dbg.posture === "hunched" ? "warn" : dbg.posture === "good" ? "ok" : "off"],
@@ -95,7 +89,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
         </div>
 
         <ul className="cc-legend" aria-hidden="true">
-          <li><i className="k-head" />Head</li>
+          <li><i className="k-head" />You</li>
           <li><i className="k-shoulder" />Shoulders</li>
           <li><i className="k-wrist" />Hands</li>
           <li><i className="k-phone" />Phone</li>
@@ -113,11 +107,11 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
           </dl>
         )}
 
-        {!!dbg?.objects.length && (
+        {things.length > 0 && (
           <div className="cc-objects">
             <h3>Things it spotted</h3>
             <ul>
-              {dbg.objects.map((o, i) => (
+              {things.map((o, i) => (
                 <li key={i} className={o.verdict}>
                   <b>{o.verdict === "phone" ? "Phone" : nice(o.label)}</b>
                   <span>{o.why}</span>
@@ -130,7 +124,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
 
         <p className="hint">
           Hold up your phone, your calculator and your iPad one at a time to see how each is read. Only a dark,
-          phone-sized thing in your hand counts as your phone.
+          phone-sized thing near your hand counts as your phone. Your card holder is fine.
         </p>
         {onToggleSelf && (
           <label className="toggle-row">
@@ -144,56 +138,3 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
   );
 }
 
-const nice = (label: string) =>
-  label === "remote" ? "Calculator?" : label === "laptop" || label === "tv" ? "iPad?" : label[0].toUpperCase() + label.slice(1);
-
-function overlay(g: CanvasRenderingContext2D, d: CamDebug) {
-  const X = (x: number) => (1 - x) * W; // mirrored to match the picture
-  const css = getComputedStyle(document.documentElement);
-  const c = {
-    head: css.getPropertyValue("--accent").trim() || "#5ee0a0",
-    shoulder: "#7cc4ff",
-    wrist: "#ffb86b",
-    phone: "#ff7d8a",
-    ignored: "rgba(255,255,255,0.55)",
-  };
-  g.lineWidth = 3;
-  g.font = "600 15px 'Bricolage Grotesque', system-ui, sans-serif";
-
-  if (d.face) {
-    g.setLineDash([6, 6]);
-    g.strokeStyle = c.head;
-    g.strokeRect(X(d.face.x + d.face.w), d.face.y * H, d.face.w * W, d.face.h * H);
-    g.setLineDash([]);
-  }
-  const sh = d.points.filter((p) => p.part === "shoulder");
-  if (sh.length === 2) {
-    g.strokeStyle = c.shoulder;
-    g.beginPath();
-    g.moveTo(X(sh[0].x), sh[0].y * H);
-    g.lineTo(X(sh[1].x), sh[1].y * H);
-    g.stroke();
-  }
-  for (const p of d.points) {
-    g.fillStyle = c[p.part];
-    g.beginPath();
-    g.arc(X(p.x), p.y * H, p.part === "head" ? 5 : 7, 0, Math.PI * 2);
-    g.fill();
-  }
-  for (const o of d.objects) {
-    const col = o.verdict === "phone" ? c.phone : c.ignored;
-    const x = X(o.x + o.w), y = o.y * H, w = o.w * W, h = o.h * H;
-    g.strokeStyle = col;
-    g.beginPath();
-    g.roundRect(x, y, w, h, 8);
-    g.stroke();
-    const text = `${o.verdict === "phone" ? "Phone" : nice(o.label)} · ${Math.round(o.score * 100)}%`;
-    const tw = g.measureText(text).width + 14;
-    g.fillStyle = col;
-    g.beginPath();
-    g.roundRect(x, Math.max(0, y - 24), tw, 22, 6);
-    g.fill();
-    g.fillStyle = "#0d1418";
-    g.fillText(text, x + 7, Math.max(16, y - 8));
-  }
-}

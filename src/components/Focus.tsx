@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { CamStatus } from "../lib/camera";
+import type { CamStatus, FocusCamera } from "../lib/camera";
+import { drawCam } from "../lib/camDraw";
 import type { Active, Session, Settings } from "../lib/store";
 import { fmtClock, fmtDur, focusMs, MIN, phaseElapsed } from "../lib/timer";
 import { breakIdeas, lockInLines } from "../lib/content";
@@ -17,11 +18,12 @@ interface Props {
   onSkipBreak: () => void;
   onFinish: () => void;
   camStatus: CamStatus;
-  camVideo: HTMLVideoElement | null;
+  cam: FocusCamera | null;
+  onToggleSelf: () => void;
   onCamCheck: () => void;
 }
 
-export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, camVideo, onCamCheck }: Props) {
+export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, cam, onCamCheck, onToggleSelf }: Props) {
   const [ending, setEnding] = useState(false);
   const [ideaShift, setIdeaShift] = useState(0);
   const onBreak = active.phase !== "focus";
@@ -84,7 +86,7 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
           {active.goal && <span className="focus-goal">{active.goal}</span>}
         </div>
         <div className="focus-badges">
-          {settings.camera && <CamBubble status={camStatus} video={camVideo} showSelf={settings.showSelf} onToggle={onCamCheck} />}
+          {settings.camera && <CamBubble status={camStatus} cam={cam} showSelf={settings.showSelf} onOpen={onCamCheck} onToggle={onToggleSelf} />}
           {active.test && <div className="test-badge" title="Short timers, nothing gets saved">Test run</div>}
           {settings.lockIn && (
             <div className="lock-badge" title="Lock-in mode is on">
@@ -102,7 +104,7 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
             {pomodoro
               ? onBreak
                 ? "back to it after this"
-                : `then a ${nextBreakLong ? settings.longMin : settings.shortMin} min break`
+                : `then a ${((m) => (m < 1 ? `${Math.round(m * 60)} s` : `${m} min`))(nextBreakLong ? settings.longMin : settings.shortMin)} break`
               : `${fmtDur(focused)} focused`}
           </div>
         </Ring>
@@ -194,33 +196,46 @@ function LockInGate({ seconds, focused, onStay, onEnd }: { seconds: number; focu
   );
 }
 
-function CamBubble({ status, video, showSelf, onToggle }: { status: CamStatus; video: HTMLVideoElement | null; showSelf: boolean; onToggle: () => void }) {
-  const box = useRef<HTMLDivElement>(null);
+function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamStatus; cam: FocusCamera | null; showSelf: boolean; onOpen: () => void; onToggle: () => void }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const on = status.state === "on" && !!cam;
   useEffect(() => {
-    const el = box.current;
-    if (!el || !video || !showSelf) return;
-    video.className = "cam-video";
-    el.appendChild(video);
-    void video.play().catch(() => {});
-    return () => { if (video.parentElement === el) el.removeChild(video); };
-  }, [video, showSelf, status.state]);
+    if (!on || !showSelf || !cam) return;
+    let raf = 0, last = 0;
+    const loop = (t: number) => {
+      raf = requestAnimationFrame(loop);
+      if (t - last < 66) return; // ~15 fps is plenty for a preview
+      last = t;
+      if (canvas.current) drawCam(canvas.current, cam);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [on, showSelf, cam]);
 
   const label =
     status.state === "loading" ? "Starting camera…"
-    : status.state === "denied" ? "Camera blocked. Allow it in Chrome's address bar to use the camera features."
+    : status.state === "denied" ? "Camera blocked. Allow it in Chrome's address bar."
     : status.state === "error" ? "Camera isn't available right now"
-    : status.present ? "Camera sees you. Nothing leaves this PC."
-    : "Can't see you right now";
+    : status.present ? "Sees you"
+    : "Can't see you";
   const tone = status.state !== "on" ? status.state : status.present ? "here" : "gone";
+
+  if (!showSelf || !on) {
+    return (
+      <button className={`cam-bubble ${tone}`} onClick={on ? onToggle : onOpen} title={on ? "Show the camera" : label} aria-label={on ? "Show the camera" : label}>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" />
+        </svg>
+      </button>
+    );
+  }
   return (
-    <button className={`cam-bubble ${tone} ${showSelf ? "self" : ""}`} onClick={onToggle} title={`${label} Click to see what the camera sees.`} aria-label={label}>
-      <div className="cam-face" ref={box}>
-        {(!showSelf || status.state !== "on") && (
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" />
-          </svg>
-        )}
-      </div>
-    </button>
+    <div className={`cam-pip ${tone}`}>
+      <button className="cam-pip-view" onClick={onOpen} title="Open the full camera check" aria-label="Open the full camera check">
+        <canvas ref={canvas} width={320} height={240} />
+      </button>
+      <span className="cam-pip-status"><i />{label}</span>
+      <button className="cam-pip-hide" onClick={onToggle} aria-label="Hide the camera preview" title="Hide">–</button>
+    </div>
   );
 }

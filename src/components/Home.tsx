@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session, Settings } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
 import { plantStage, streak, todayMinutes, totalHours } from "../lib/stats";
-import { encouragements, goalPlaceholders, greeting, subjectHue } from "../lib/content";
+import { encouragements, greeting, subjectHue } from "../lib/content";
 import { FLOWERS, flowersAt, nextFlower } from "../lib/flowers";
 import MonthCalendar from "./MonthCalendar";
 import Flower from "./Flower";
@@ -28,7 +28,6 @@ interface Props {
 
 export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, onTest, onCamCheck, helpers, updateSettings }: Props) {
   const [subject, setSubject] = useState(settings.lastSubject || "General");
-  const [goal, setGoal] = useState("");
   const [adding, setAdding] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   const [pressed, setPressed] = useState(false);
@@ -41,7 +40,6 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
   const hours = totalHours(sessions);
   const stage = plantStage(hours);
   const toNext = stage >= 12 ? 0 : (stage + 1 - hours) * 60;
-  const placeholder = useMemo(() => goalPlaceholders[Math.floor(Math.random() * goalPlaceholders.length)], []);
 
   const exam = useMemo(() => {
     const todayStart = new Date(now);
@@ -65,7 +63,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
     if (pressed) return;
     setPressed(true);
     // Let the press animation land before the screen swaps.
-    setTimeout(() => onStart(subject, goal), 320);
+    setTimeout(() => onStart(subject, ""), 320);
   };
 
   // The plant's speech bubble: what's going on today, plus a bit of pep. Changes every 9 s.
@@ -208,28 +206,23 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
               )}
             </div>
 
-            <label className="goal-field">
-              <span className="sr-only">What are you working on?</span>
-              <input
-                id="session-goal"
-                value={goal}
-                onChange={(e) => setGoal(e.target.value)}
-                placeholder={`What's the goal? e.g. ${placeholder}`}
-                maxLength={80}
-                onKeyDown={(e) => e.key === "Enter" && go()}
-              />
-            </label>
+            <div className="timer-edit" aria-label="Timer">
+            <div className="seg mini" role="radiogroup" aria-label="Timer mode">
+              <button role="radio" aria-checked={settings.mode === "pomodoro"} className={settings.mode === "pomodoro" ? "on" : ""} onClick={() => updateSettings({ mode: "pomodoro" })}>Pomodoro</button>
+              <button role="radio" aria-checked={settings.mode === "flow"} className={settings.mode === "flow" ? "on" : ""} onClick={() => updateSettings({ mode: "flow" })}>Flow</button>
+            </div>
+            {settings.mode === "pomodoro" ? (
+              <>
+                <MinField label="Focus" value={settings.focusMin} min={5} max={120} step={5} onChange={(v) => updateSettings({ focusMin: v })} />
+                <MinField label="Break" value={settings.shortMin} min={1} max={30} step={1} onChange={(v) => updateSettings({ shortMin: v })} />
+              </>
+            ) : (
+              <span className="timer-note">Counts up, no breaks</span>
+            )}
+            <button className="link-btn" onClick={onSettings}>{settings.lockIn ? "Lock-in on" : "Lock-in off"}</button>
+          </div>
 
-            <button className="mode-line" onClick={onSettings}>
-              {settings.mode === "pomodoro"
-                ? `Pomodoro ${settings.focusMin} / ${settings.shortMin}`
-                : "Flow mode, no breaks"}
-              <span className="sep">·</span>
-              {settings.lockIn ? "Lock-in on" : "Lock-in off"}
-              <span className="edit">Change</span>
-            </button>
-
-            <div className="helper-row">
+          <div className="helper-row">
             <button className={`helpers ${settings.camera ? "ok" : ""}`} onClick={onSettings} title="Camera coach settings">
               <span className={`helper ${settings.camera ? "on" : ""}`}>
                 <span className="helper-dot" />
@@ -304,6 +297,38 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
       <p className="kbd-hint">
         Press <kbd>Space</kbd> to start
       </p>
+    </div>
+  );
+}
+
+/** A minutes box you can type into or nudge with the arrows. */
+function MinField({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const commit = (raw: string) => {
+    const n = Math.round(Number(raw));
+    if (Number.isFinite(n) && n > 0) onChange(Math.max(min, Math.min(max, n)));
+    else setText(String(value));
+  };
+  return (
+    <div className="min-field">
+      <span className="min-label">{label}</span>
+      <button aria-label={`Less ${label.toLowerCase()} time`} disabled={value <= min} onClick={() => onChange(Math.max(min, value - step))}>−</button>
+      <input
+        id={`home-${label.toLowerCase()}`}
+        inputMode="numeric"
+        aria-label={`${label} minutes`}
+        value={text}
+        onChange={(e) => setText(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "ArrowUp") { e.preventDefault(); onChange(Math.min(max, value + step)); }
+          if (e.key === "ArrowDown") { e.preventDefault(); onChange(Math.max(min, value - step)); }
+        }}
+      />
+      <span className="min-unit">min</span>
+      <button aria-label={`More ${label.toLowerCase()} time`} disabled={value >= max} onClick={() => onChange(Math.min(max, value + step))}>+</button>
     </div>
   );
 }

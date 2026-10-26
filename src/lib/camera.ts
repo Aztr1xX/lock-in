@@ -27,7 +27,7 @@ export interface DebugObject {
   x: number; y: number; w: number; h: number; // 0..1 of the frame
   label: string;
   score: number;
-  verdict: "phone" | "ignored";
+  verdict: "phone" | "ignored" | "you";
   why: string;
 }
 
@@ -54,6 +54,8 @@ interface Models {
   pose: PoseLandmarker;
   face: FaceLandmarker;
   objects: ObjectDetector;
+  /** Second detector for close-up crops around your hands, where a phone is big enough to spot. */
+  hands: ObjectDetector;
 }
 
 let modelsPromise: Promise<Models> | null = null;
@@ -69,7 +71,7 @@ function loadModels(): Promise<Models> {
         return await fn("CPU");
       }
     };
-    const [pose, face, objects] = await Promise.all([
+    const [pose, face, objects, hands] = await Promise.all([
       make((delegate) =>
         mp.PoseLandmarker.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: "/mediapipe/pose_landmarker_lite.task", delegate },
@@ -90,22 +92,35 @@ function loadModels(): Promise<Models> {
         mp.ObjectDetector.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: "/mediapipe/efficientdet_lite0.tflite", delegate },
           runningMode: "VIDEO",
-          scoreThreshold: 0.35,
-          // Look for things that get mistaken for phones too, so they can be ruled out.
-          categoryAllowlist: ["cell phone", "remote", "laptop", "tv", "book", "keyboard"],
-          maxResults: 6,
+          scoreThreshold: 0.25,
+          // "person" is the most reliable "are you at your desk" signal. The rest get
+          // mistaken for phones, so they're looked for too and ruled out.
+          categoryAllowlist: ["person", "cell phone", "remote", "laptop", "tv", "book", "keyboard"],
+          maxResults: 8,
+        }),
+      ),
+      make((delegate) =>
+        mp.ObjectDetector.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: "/mediapipe/efficientdet_lite0.tflite", delegate },
+          runningMode: "IMAGE",
+          scoreThreshold: 0.25,
+          categoryAllowlist: ["cell phone", "remote"],
+          maxResults: 3,
         }),
       ),
     ]);
-    return { pose, face, objects };
+    return { pose, face, objects, hands };
   })();
   modelsPromise.catch(() => (modelsPromise = null));
   return modelsPromise;
 }
 
-const AWAY_MS = 60_000;
+const AWAY_MS = 30_000;
+const PERSON_SCORE = 0.45;
+const PERSON_KEEP = 3_000; // a person sighting counts as "here" for this long
 const BACK_MS = 2_000;
-const PHONE_HITS = 3; // consecutive phone sightings (~1.5 s apart)
+const PHONE_HITS = 3; // phone sightings within the last PHONE_WINDOW checks (1 s apart)
+const PHONE_WINDOW = 6;
 const PHONE_COOLDOWN = 3 * 60_000;
 const POSTURE_HOLD = 3 * 60_000;
 const POSTURE_COOLDOWN = 10 * 60_000;
@@ -117,8 +132,8 @@ const TICK_MS = 500;
 // Phone vs the other things on Ryan's desk. His phone is dark and small; his Casio is
 // light grey/white; his iPad is far bigger in frame.
 const MAX_PHONE_AREA = 0.12; // share of the frame; an iPad at desk distance is bigger
-const MAX_PHONE_LUMA = 0.55; // brighter than this is the white calculator, not the phone
-const HAND_REACH = 0.12; // a wrist this close to the box (of frame width) means it's in hand
+const MIN_DARK = 0.3; // share of dark pixels. His phone is black (a card in the back holder adds a light patch); the Casio is mostly white
+const HAND_REACH = 0.16; // a wrist this close to the box (of frame width) means it's in hand
 const FRAME_MS = 10_000;
 const NORMAL = { away: AWAY_MS, calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
 // Test runs: everything fires fast so you can try it in a minute.
@@ -141,6 +156,9 @@ export class FocusCamera {
   private isAway = false;
   // phone
   private phoneHits = 0;
+  private phoneLog: boolean[] = [];
+  private personAt = 0;
+  private crop = document.createElement("canvas");
   private lastPhoneNudge = 0;
   // posture
   private calib: { w: number[]; y: number[] } = { w: [], y: [] };
@@ -179,6 +197,7 @@ export class FocusCamera {
     this.snap.height = 240;
     this.probe.width = 160;
     this.probe.height = 120;
+    this.crop.width = this.crop.height = 320;
   }
 
   private k = NORMAL;
@@ -246,6 +265,7 @@ export class FocusCamera {
     this.slouchSince = 0;
     this.eyesClosedSince = 0;
     this.phoneHits = 0;
+    this.phoneLog = [];
     if (on && !this.base && !this.calibStart) this.calibStart = now;
   }
 
@@ -279,9 +299,10 @@ export class FocusCamera {
       }
       const vis = (i: number) => (lm[i]?.visibility ?? 0) > 0.5;
       const ls = lm[11], rs = lm[12];
-      const headSeen = [0, 2, 5, 7, 8].some(vis);
       const shouldersSeen = vis(11) && vis(12);
-      present = headSeen || shouldersSeen;
+      // Pose alone can "find" someone in an empty chair, so it only counts when it's confident.
+      const sure = (i: number) => (lm[i]?.visibility ?? 0) > 0.8;
+      present = [0, 2, 5, 7, 8].filter(sure).length >= 2 || (sure(11) && sure(12));
       if (shouldersSeen) shoulders = { w: Math.hypot(ls.x - rs.x, ls.y - rs.y), y: (ls.y + rs.y) / 2 };
     }
 
@@ -307,21 +328,49 @@ export class FocusCamera {
       jawOpen = get("jawOpen");
     }
 
-    // ---- phone, checked every 1.5 s
-    if (this.tickN % 3 === 0) {
+    // ---- person and phone, checked every second
+    if (this.tickN % 2 === 0) {
       const det = this.models.objects.detectForVideo(v, ts);
       const W = v.videoWidth, H = v.videoHeight;
       const pg = this.probe.getContext("2d", { willReadFrequently: true });
       pg?.drawImage(v, 0, 0, 160, 120);
-      const objects: DebugObject[] = det.detections.map((d) => {
+      const objects: DebugObject[] = [];
+      for (const d of det.detections) {
         const c = d.categories[0];
         const b = d.boundingBox!;
         const box = { x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H };
-        return { ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, wrists, pg) };
-      });
+        if (c.categoryName === "person") {
+          if (c.score >= PERSON_SCORE) {
+            this.personAt = now;
+            objects.push({ ...box, label: "person", score: c.score, verdict: "you", why: "you" });
+          }
+          continue;
+        }
+        objects.push({ ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, wrists, pg) });
+      }
+      // Close-ups around each hand: a phone is tiny in the full picture but easy to see up close.
+      if (!objects.some((o) => o.verdict === "phone")) {
+        for (const w of wrists) {
+          const side = 0.42 * Math.min(W, H);
+          const cx = w.x * W, cy = w.y * H - side * 0.15; // hands reach a little past the wrist
+          const sx = Math.max(0, Math.min(W - side, cx - side / 2)), sy = Math.max(0, Math.min(H - side, cy - side / 2));
+          const cg = this.crop.getContext("2d");
+          if (!cg) break;
+          cg.drawImage(v, sx, sy, side, side, 0, 0, 320, 320);
+          for (const d of this.models.hands.detect(this.crop).detections) {
+            const c = d.categories[0];
+            const b = d.boundingBox!;
+            const box = { x: (sx + (b.originX / 320) * side) / W, y: (sy + (b.originY / 320) * side) / H, w: ((b.width / 320) * side) / W, h: ((b.height / 320) * side) / H };
+            objects.push({ ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, [w], pg) });
+          }
+        }
+      }
       this.debug.objects = objects;
-      this.phoneHits = objects.some((o) => o.verdict === "phone") ? this.phoneHits + 1 : 0;
+      this.phoneLog = [...this.phoneLog, objects.some((o) => o.verdict === "phone")].slice(-PHONE_WINDOW);
+      this.phoneHits = this.phoneLog.filter(Boolean).length;
     }
+    const personSeen = now - this.personAt < PERSON_KEEP;
+    if (personSeen) present = true;
 
     const yawning = jawOpen > 0.55;
     this.debug = {
@@ -376,6 +425,7 @@ export class FocusCamera {
     if (this.phoneHits >= PHONE_HITS && now - this.lastPhoneNudge > this.k.phoneCool) {
       this.lastPhoneNudge = now;
       this.phoneHits = 0;
+      this.phoneLog = [];
       this.counts.phone++;
       if (this.features.phone) this.onEvent("phone");
     }
@@ -452,18 +502,17 @@ export class FocusCamera {
     g: CanvasRenderingContext2D | null | undefined,
   ): { verdict: DebugObject["verdict"]; why: string } {
     if (label !== "cell phone") return { verdict: "ignored", why: label === "remote" ? "looks like a calculator" : label === "laptop" || label === "tv" ? "looks like your iPad" : label };
-    if (score < 0.4) return { verdict: "ignored", why: "not sure enough" };
+    if (score < 0.3) return { verdict: "ignored", why: "not sure enough" };
     if (box.w * box.h > MAX_PHONE_AREA) return { verdict: "ignored", why: "too big, probably your iPad" };
     if (g) {
       const px = g.getImageData(Math.max(0, box.x * 160), Math.max(0, box.y * 120), Math.max(1, box.w * 160), Math.max(1, box.h * 120)).data;
-      let sum = 0;
-      for (let i = 0; i < px.length; i += 4) sum += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
-      const luma = sum / (px.length / 4) / 255;
-      if (luma > MAX_PHONE_LUMA) return { verdict: "ignored", why: "too light, probably your calculator" };
+      let dark = 0;
+      for (let i = 0; i < px.length; i += 4) if (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2] < 90) dark++;
+      if (dark / (px.length / 4) < MIN_DARK) return { verdict: "ignored", why: "too light, probably your calculator" };
     }
     const inHand = wrists.some((w) => w.x > box.x - HAND_REACH && w.x < box.x + box.w + HAND_REACH && w.y > box.y - HAND_REACH && w.y < box.y + box.h + HAND_REACH);
     if (inHand) return { verdict: "phone", why: "phone in your hand" };
-    if (!wrists.length && score > 0.6) return { verdict: "phone", why: "phone (hands out of view)" };
+    if (!wrists.length && score > 0.5) return { verdict: "phone", why: "phone (hands out of view)" };
     return { verdict: "ignored", why: "phone on the desk, not in hand" };
   }
 

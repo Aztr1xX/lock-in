@@ -757,3 +757,69 @@ body::after {
 .flower-icon .flower-core { fill: #ffd166; }
 .mc-head .icon-btn { font-size: 1.5rem; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; }
 .garden .plant { width: min(230px, 60vw); }
+
+/* ================= round 3 ================= */
+
+/* ---------- bigger, clearer warnings that leave after 5 s ---------- */
+.toast {
+  max-width: min(640px, calc(100vw - 24px)); min-width: min(420px, calc(100vw - 24px));
+  padding: 16px 14px 16px 20px; border-radius: 22px; gap: 14px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px);
+}
+.toast-icon { font-size: 1.9rem; line-height: 1; }
+.toast-text { font-size: 1.08rem; font-weight: 700; line-height: 1.35; flex: 1; }
+.toast-action { padding: 9px 18px; font-size: 0.98rem; }
+.toast-x { font-size: 1.5rem; }
+.toast-timer {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--accent); opacity: 0.7;
+  transform-origin: left; animation: toast-time linear both;
+}
+@keyframes toast-time { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ---------- big camera preview during sessions ---------- */
+.cam-pip {
+  position: fixed; z-index: 30; top: 74px; right: max(20px, env(safe-area-inset-right));
+  width: clamp(150px, 22vw, 300px); aspect-ratio: 4 / 3; border-radius: 20px; overflow: hidden;
+  border: 2px solid var(--line); background: #000; box-shadow: var(--shadow);
+  animation: pip-in 0.7s var(--ease) both; transition: border-color 0.4s;
+}
+@keyframes pip-in { from { opacity: 0; transform: translateY(-8px) scale(0.94); } }
+.cam-pip.here { border-color: var(--accent); }
+.cam-pip.gone { border-color: var(--break); }
+.cam-pip-view { border: 0; padding: 0; background: none; width: 100%; height: 100%; display: block; cursor: zoom-in; }
+.cam-pip-view canvas { width: 100%; height: 100%; display: block; }
+.cam-pip-status {
+  position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; pointer-events: none;
+  padding: 4px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; color: #e9f2ee; background: rgba(13, 20, 24, 0.7);
+}
+.cam-pip-status i { width: 8px; height: 8px; border-radius: 50%; background: #8da39b; }
+.cam-pip.here .cam-pip-status i { background: #5ee0a0; }
+.cam-pip.gone .cam-pip-status i { background: #ffb86b; }
+.cam-pip-hide {
+  position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; border: 0; line-height: 1;
+  background: rgba(13, 20, 24, 0.65); color: #e9f2ee; font-size: 1.1rem; opacity: 0; transition: opacity 0.2s;
+}
+.cam-pip:hover .cam-pip-hide, .cam-pip-hide:focus-visible { opacity: 1; }
+@media (hover: none) { .cam-pip-hide { opacity: 1; } }
+@media (max-width: 760px) {
+  .cam-pip { top: auto; bottom: 76px; right: 12px; width: 124px; border-radius: 14px; }
+  .cam-pip-status { font-size: 0.68rem; padding: 2px 7px; left: 5px; bottom: 5px; }
+}
+
+/* ---------- timer settings right on the homepage ---------- */
+.timer-edit { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px; }
+.seg.mini { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); gap: 2px; }
+.seg.mini button { border: 0; background: none; padding: 7px 14px; border-radius: 999px; font-weight: 700; font-size: 0.88rem; color: var(--muted); transition: background 0.25s var(--ease), color 0.25s; }
+.seg.mini button.on { background: var(--accent); color: var(--accent-ink); }
+.min-field { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); transition: border-color 0.2s; }
+.min-field:focus-within { border-color: var(--accent); }
+.min-label { font-size: 0.82rem; font-weight: 700; color: var(--muted); padding: 0 6px 0 10px; }
+.min-field button { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--surface-2); font-weight: 800; color: var(--ink); transition: background 0.2s, transform 0.2s var(--spring); }
+.min-field button:hover:not(:disabled) { background: var(--accent-soft); transform: scale(1.08); }
+.min-field button:disabled { opacity: 0.35; }
+.min-field input {
+  width: 2.6ch; border: 0; background: none; outline: none; text-align: right; font-family: var(--mono); font-weight: 700; font-size: 1.05rem; color: var(--ink); padding: 0;
+}
+.min-unit { font-size: 0.8rem; color: var(--muted); padding: 0 6px 0 3px; }
+.timer-note { color: var(--muted); font-size: 0.9rem; }

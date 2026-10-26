@@ -285,7 +285,8 @@ export default function App() {
         onPause={() => pause()}
         onResume={resume}
         camStatus={camStatus}
-        camVideo={camRef.current?.video ?? null}
+        cam={camRef.current}
+        onToggleSelf={() => updateSettings({ showSelf: !settings.showSelf })}
         onCamCheck={() => setCamCheck(true)}
         onSkipBreak={skipBreak}
         onFinish={finish}
