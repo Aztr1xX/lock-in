@@ -124,3 +124,19 @@ chrome.alarms.onAlarm.addListener(async () => {
 });
 chrome.runtime.onStartup.addListener(() => applyRules());
 chrome.runtime.onInstalled.addListener(() => applyRules());
+
+
+// After an install, update or reload, tabs that were already open lose their content
+// scripts, so an open Lock In tab couldn't reach the blocker until you refreshed it.
+// Put the scripts straight back into every open tab instead.
+chrome.runtime.onInstalled.addListener(async () => {
+  const tabs = await chrome.tabs.query({});
+  for (const t of tabs) {
+    if (!t.id || !t.url || !/^https?:/.test(t.url)) continue;
+    chrome.scripting.executeScript({ target: { tabId: t.id, allFrames: true }, files: ["bridge.js"] }).catch(() => {});
+    if (/^https:\/\/([a-z0-9-]+\.)*youtube\.com\//.test(t.url)) {
+      chrome.scripting.insertCSS({ target: { tabId: t.id }, files: ["youtube.css"] }).catch(() => {});
+      chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["youtube.js"] }).catch(() => {});
+    }
+  }
+});
