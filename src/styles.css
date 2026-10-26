@@ -871,3 +871,8 @@ body::after {
 .cc-layer.on i { opacity: 1; }
 .k-you { background: transparent; border: 2px solid var(--accent); border-radius: 3px !important; }
 .k-face { background: transparent; border: 2px dashed var(--accent); border-radius: 3px !important; }
+.cc-camera { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 0.88rem; font-weight: 700; }
+.cc-camera select {
+  flex: 1; min-width: 0; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-weight: 600;
+}
+.cc-nv { margin: 6px 0 0; }

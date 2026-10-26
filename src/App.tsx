@@ -77,6 +77,7 @@ export default function App() {
     );
     camRef.current = cam;
     cam.setQuick(activeTest);
+    void cam.setCamera(settings.cameraId);
     void cam.start();
     return () => {
       popRef.current?.close();
@@ -87,6 +88,7 @@ export default function App() {
   }, [activeId, camOn]);
 
   useEffect(() => camRef.current?.setFeatures(settings.cam), [settings.cam]);
+  useEffect(() => void camRef.current?.setCamera(settings.cameraId), [settings.cameraId]);
 
   // Detection counts during focus only. While auto-paused it keeps watching for you to come back.
   const focusing = !!active && active.phase === "focus" && (!active.pausedAt || !!active.autoPaused);
@@ -383,6 +385,7 @@ export default function App() {
           settings={settings}
           onClose={() => setCamCheck(false)}
           onOverlay={(overlay) => updateSettings({ overlay })}
+          onCamera={(cameraId) => updateSettings({ cameraId })}
           onToggleSelf={active ? () => updateSettings({ showSelf: !settings.showSelf }) : undefined}
         />
       )}

@@ -1,14 +1,14 @@
-// Runs object detection off the main thread, so the timer and animations never stutter
-// while it works.
+// Runs object and hand detection off the main thread, so the timer and animations
+// never stutter while it works.
 
-import { type Crop, type Detectors, detectObjects, makeDetectors } from "./objects";
+import { type Detectors, detectObjects, makeDetectors } from "./objects";
 
 let detectors: Promise<Detectors> | null = null;
-const probe = new OffscreenCanvas(160, 120);
+const probe = new OffscreenCanvas(320, 240);
 const zoom = new OffscreenCanvas(320, 320);
 
-self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; crops?: Crop[]; base?: string }>) => {
-  const { id, frame, crops, base } = e.data;
+self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?: string }>) => {
+  const { id, frame, base } = e.data;
   try {
     if (base) {
       detectors ??= makeDetectors(base);
@@ -18,9 +18,9 @@ self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; crops
     }
     if (!frame || !detectors) return;
     const d = await detectors;
-    const objects = detectObjects(d, frame, frame.width, frame.height, crops ?? [], probe, zoom);
+    const found = detectObjects(d, frame, frame.width, frame.height, probe, zoom);
     frame.close();
-    self.postMessage({ id, objects });
+    self.postMessage({ id, found });
   } catch (err) {
     frame?.close();
     self.postMessage({ id, error: String(err) });

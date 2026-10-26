@@ -29,6 +29,7 @@ export interface Settings {
   cam: CamFeatures;
   showSelf: boolean;
   overlay: Overlay;
+  cameraId: string; // "" = default (or NVIDIA Broadcast when it's there)
 }
 
 /** What gets drawn over the camera picture. */
@@ -90,6 +91,7 @@ export const defaultSettings: Settings = {
   camera: true,
   cam: { away: true, phone: true, posture: true, drowsy: true, timelapse: true },
   showSelf: true,
+  cameraId: "",
   overlay: { you: true, face: true, head: true, shoulders: true, hands: true, things: true },
 };
 

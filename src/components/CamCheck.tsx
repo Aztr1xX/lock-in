@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type CamDebug, type CamStatus, FocusCamera } from "../lib/camera";
+import { type CamDebug, type CamStatus, FocusCamera, listCameras } from "../lib/camera";
 import type { Overlay, Settings } from "../lib/store";
 import { IconClose } from "./Icons";
 import { drawCam, nice } from "../lib/camDraw";
@@ -11,6 +11,7 @@ interface Props {
   onClose: () => void;
   onToggleSelf?: () => void;
   onOverlay: (o: Overlay) => void;
+  onCamera: (id: string) => void;
 }
 
 /** Each thing it can draw, as a toggle. The swatch doubles as the legend. */
@@ -26,7 +27,7 @@ const LAYERS: [keyof Overlay, string, string][] = [
 const W = 640, H = 480;
 
 /** Shows what the camera sees and what it makes of it, live. Nothing leaves this PC. */
-export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleSelf, onOverlay }: Props) {
+export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleSelf, onOverlay, onCamera }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [cam, setCam] = useState<FocusCamera | null>(sessionCam);
   const [status, setStatus] = useState<CamStatus>(sessionCam?.status ?? { state: "loading", present: false, faceVisible: false });
@@ -39,6 +40,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
     if (sessionCam) return;
     const own = new FocusCamera(settings.cam, () => {}, setStatus, () => {});
     own.setFeatures({ ...settings.cam, timelapse: false });
+    void own.setCamera(settings.cameraId);
     setCam(own);
     void own.start().then(() => own.setFocusing(true));
     return () => own.stop();
@@ -68,6 +70,20 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
   }, [onClose]);
 
   const on = status.state === "on";
+  // Camera picker. Names only show once the camera has been allowed, so list them after it's on.
+  const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
+  const [current, setCurrent] = useState("");
+  useEffect(() => {
+    if (!on || !cam) return;
+    void listCameras().then(setCams);
+    const id = setInterval(() => setCurrent(cam.currentCamera()), 500);
+    return () => clearInterval(id);
+  }, [on, cam]);
+  const pick = (id: string) => {
+    onCamera(id);
+    void cam?.setCamera(id);
+  };
+  const usingNvidia = cams.some((c) => c.deviceId === current && /nvidia broadcast/i.test(c.label));
   const phones = dbg?.objects.filter((o) => o.verdict === "phone") ?? [];
   const things = dbg?.objects.filter((o) => o.verdict !== "you") ?? [];
   const rows: [string, string, "ok" | "warn" | "off"][] = dbg && on
@@ -102,6 +118,16 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
             </p>
           )}
         </div>
+
+        {cams.length > 1 && (
+          <label className="cc-camera">
+            <span>Camera</span>
+            <select value={current} onChange={(e) => pick(e.target.value)}>
+              {cams.map((c, i) => <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>)}
+            </select>
+          </label>
+        )}
+        {usingNvidia && <p className="hint cc-nv">Using NVIDIA Broadcast. Keep background blur on, and leave Auto Frame and Eye Contact off so it sees you as you are.</p>}
 
         <div className="cc-layers" role="group" aria-label="What to show on the camera">
           {LAYERS.map(([k, label, swatch]) => (

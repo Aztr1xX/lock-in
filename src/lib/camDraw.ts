@@ -50,6 +50,12 @@ function overlay(g: CanvasRenderingContext2D, d: CamDebug, W: number, H: number,
     g.lineTo(X(sh[1].x), sh[1].y * H);
     g.stroke();
   }
+  if (show.hands) {
+    g.strokeStyle = c.wrist;
+    g.setLineDash([4 * k, 4 * k]);
+    for (const h of d.hands ?? []) g.strokeRect(X(h.x + h.w), h.y * H, h.w * W, h.h * H);
+    g.setLineDash([]);
+  }
   for (const p of d.points) {
     if (!(p.part === "head" ? show.head : p.part === "shoulder" ? show.shoulders : show.hands)) continue;
     g.fillStyle = c[p.part];

@@ -129,7 +129,7 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
             <div className="cam-opts">
               {([
                 ["timelapse", "Time-lapse", "A photo every 10 seconds, played back as a short video"],
-                ["away", "Pause when I leave", "Stops the timer if you're gone for a minute, restarts when you're back"],
+                ["away", "Pause when I leave", "Stops the timer if you're gone for 10 seconds, restarts when you're back"],
                 ["phone", "Phone nudge", "A gentle nudge if you pick up your phone"],
                 ["posture", "Posture reminder", "Only after a few minutes of hunching. Looking down at your iPad is fine"],
                 ["drowsy", "Tired alert", "Suggests a break if you keep yawning or your eyes keep closing"],
