@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Lock In Blocker",
+  "version": "0.1.0",
+  "description": "Blocks Twitch, game sites and non-study YouTube while a Lock In session is running.",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "Lock In Blocker" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "declarativeNetRequest", "alarms", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["bridge.js"], "all_frames": true, "run_at": "document_start" },
+    { "matches": ["*://*.youtube.com/*"], "js": ["youtube.js"], "css": ["youtube.css"], "run_at": "document_idle" }
+  ],
+  "web_accessible_resources": [{ "resources": ["blocked.html"], "matches": ["<all_urls>"] }]
+}

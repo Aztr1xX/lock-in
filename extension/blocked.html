@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locked in</title>
+<link rel="icon" href="icons/icon-32.png">
+<link rel="stylesheet" href="page.css">
+<style>
+  html, body { height: 100%; }
+  body { display: grid; place-items: center; padding: 20px; overflow: hidden; }
+  .glow { position: fixed; inset: -20%; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 45%); animation: g 8s ease-in-out infinite; pointer-events: none; }
+  @keyframes g { 50% { transform: scale(1.1); } }
+  main { position: relative; text-align: center; max-width: 520px; }
+  .ring { width: 84px; height: 84px; margin: 0 auto 20px; border-radius: 50%;
+    background: conic-gradient(var(--accent) 0 75%, var(--line) 75% 100%);
+    -webkit-mask: radial-gradient(circle, transparent 24px, #000 25px); mask: radial-gradient(circle, transparent 24px, #000 25px);
+    animation: spin 6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .eyebrow { font: 600 12px/1 Consolas, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0; }
+  h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.1; margin: 12px 0 10px; letter-spacing: -.02em; }
+  p { color: var(--muted); font-size: 17px; line-height: 1.5; margin: 0 0 8px; }
+  p b { color: var(--ink); }
+  .site { font-family: Consolas, monospace; color: var(--ink); background: var(--surface); border: 1px solid var(--line); padding: 2px 8px; border-radius: 6px; }
+  .btn { margin-top: 22px; background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 999px; padding: 14px 30px; font-weight: 800; font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<main>
+  <div class="ring"></div>
+  <p class="eyebrow" id="eyebrow">Locked in</p>
+  <h1 id="title">Not right now.</h1>
+  <p><span class="site" id="site"></span> is blocked until your session ends.</p>
+  <p id="goal"></p>
+  <button class="btn" id="back">Back to studying</button>
+</main>
+<script src="blocked.js"></script>
+</body>
+</html>

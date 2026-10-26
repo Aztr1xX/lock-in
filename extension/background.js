@@ -1,0 +1,93 @@
+importScripts("shared.js");
+
+const RULE_BASE = 1000;
+
+async function getState() {
+  const s = await chrome.storage.local.get(["sites", "lockUntil", "session", "allowChannels"]);
+  return {
+    sites: s.sites ?? DEFAULT_SITES,
+    lockUntil: s.lockUntil ?? 0,
+    session: s.session ?? null,
+    allowChannels: s.allowChannels ?? [],
+  };
+}
+
+const isLocked = (st) => st.lockUntil > Date.now();
+
+async function applyRules() {
+  const st = await getState();
+  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+  const removeRuleIds = existing.map((r) => r.id);
+  const addRules = isLocked(st)
+    ? st.sites.map((domain, i) => ({
+        id: RULE_BASE + i,
+        priority: 1,
+        action: {
+          type: "redirect",
+          redirect: { extensionPath: `/blocked.html?site=${encodeURIComponent(domain)}` },
+        },
+        condition: { requestDomains: [domain], resourceTypes: ["main_frame"] },
+      }))
+    : [];
+  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
+  chrome.action.setBadgeText({ text: isLocked(st) ? "ON" : "" });
+  chrome.action.setBadgeBackgroundColor({ color: "#14945c" });
+}
+
+function matches(url, sites) {
+  try {
+    const host = new URL(url).hostname;
+    return sites.some((d) => host === d || host.endsWith("." + d));
+  } catch {
+    return false;
+  }
+}
+
+// Tabs already open on a blocked site get bounced when a session starts.
+async function sweepTabs() {
+  const st = await getState();
+  if (!isLocked(st)) return;
+  const tabs = await chrome.tabs.query({});
+  for (const t of tabs) {
+    if (t.id && t.url && matches(t.url, st.sites)) {
+      const host = new URL(t.url).hostname.replace(/^www\./, "");
+      chrome.tabs.update(t.id, { url: chrome.runtime.getURL(`/blocked.html?site=${encodeURIComponent(host)}`) });
+    }
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  (async () => {
+    if (msg?.kind === "session") {
+      const wasLocked = isLocked(await getState());
+      if (msg.active) {
+        await chrome.storage.local.set({ lockUntil: Date.now() + GRACE_MS, session: msg.session });
+        await applyRules();
+        if (!wasLocked) await sweepTabs();
+      } else {
+        await chrome.storage.local.set({ lockUntil: 0, session: null });
+        await applyRules();
+      }
+      reply({ ok: true, locked: !!msg.active });
+    } else if (msg?.kind === "status") {
+      const st = await getState();
+      reply({ locked: isLocked(st), ...st });
+    } else if (msg?.kind === "allowChannel") {
+      const st = await getState();
+      if (!st.allowChannels.includes(msg.channel)) {
+        await chrome.storage.local.set({ allowChannels: [...st.allowChannels, msg.channel] });
+      }
+      reply({ ok: true });
+    } else if (msg?.kind === "sitesChanged") {
+      await applyRules();
+      await sweepTabs();
+      reply({ ok: true });
+    }
+  })();
+  return true;
+});
+
+chrome.alarms.create("lockin-tick", { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener(() => applyRules());
+chrome.runtime.onStartup.addListener(() => applyRules());
+chrome.runtime.onInstalled.addListener(() => applyRules());

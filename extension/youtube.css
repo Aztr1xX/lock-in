@@ -1,0 +1,29 @@
+.lockin-wall {
+  position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 20px;
+  background: rgba(8, 14, 17, 0.86); backdrop-filter: blur(14px);
+  font-family: "Segoe UI", system-ui, sans-serif; color: #e9f2ee; animation: lockin-fade 0.25s both;
+}
+@keyframes lockin-fade { from { opacity: 0; } }
+.lockin-card {
+  width: min(460px, 100%); background: #152128; border: 1px solid #243540; border-radius: 24px; padding: 32px 28px;
+  text-align: center; box-shadow: 0 30px 80px rgba(0,0,0,0.5); animation: lockin-pop 0.35s cubic-bezier(0.3,1.4,0.5,1) both;
+}
+@keyframes lockin-pop { from { transform: scale(0.92); opacity: 0; } }
+.lockin-ring {
+  width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;
+  background: conic-gradient(#5ee0a0 0 75%, #1e2e36 75% 100%);
+  -webkit-mask: radial-gradient(circle, transparent 15px, #000 16px); mask: radial-gradient(circle, transparent 15px, #000 16px);
+  animation: lockin-spin 6s linear infinite;
+}
+@keyframes lockin-spin { to { transform: rotate(360deg); } }
+.lockin-eyebrow { margin: 0; font: 600 12px/1 Consolas, monospace; letter-spacing: 0.14em; text-transform: uppercase; color: #5ee0a0; }
+.lockin-card h1 { margin: 10px 0 8px; font-size: 28px; line-height: 1.15; font-weight: 800; color: #e9f2ee; }
+.lockin-reason { margin: 0 0 10px; color: #8da39b; font-size: 15px; line-height: 1.5; }
+.lockin-reason b { color: #e9f2ee; }
+.lockin-goal { margin: 0 0 6px; color: #8da39b; font-size: 14px; }
+.lockin-goal b { color: #e9f2ee; }
+.lockin-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.lockin-actions button { font: 700 15px "Segoe UI", system-ui, sans-serif; border-radius: 999px; padding: 13px 20px; cursor: pointer; }
+.lockin-primary { background: #5ee0a0; color: #062016; border: 0; }
+.lockin-ghost { background: transparent; color: #8da39b; border: 1px solid #243540; }
+.lockin-ghost:disabled { opacity: 0.6; cursor: default; }
