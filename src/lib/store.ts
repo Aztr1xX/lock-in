@@ -30,6 +30,7 @@ export interface Settings {
   showSelf: boolean;
   overlay: Overlay;
   cameraId: string; // "" = default (or NVIDIA Broadcast when it's there)
+  awaySec: number; // out of view this long and the timer pauses
 }
 
 /** What gets drawn over the camera picture. */
@@ -92,6 +93,7 @@ export const defaultSettings: Settings = {
   cam: { away: true, phone: true, posture: true, drowsy: true, timelapse: true },
   showSelf: true,
   cameraId: "",
+  awaySec: 10,
   overlay: { you: true, face: true, head: true, shoulders: true, hands: true, things: true },
 };
 

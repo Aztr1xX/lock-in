@@ -40,6 +40,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
     if (sessionCam) return;
     const own = new FocusCamera(settings.cam, () => {}, setStatus, () => {});
     own.setFeatures({ ...settings.cam, timelapse: false });
+    own.setAwayMs(settings.awaySec * 1000);
     void own.setCamera(settings.cameraId);
     setCam(own);
     void own.start().then(() => own.setFocusing(true));
@@ -88,7 +89,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
   const things = dbg?.objects.filter((o) => o.verdict !== "you") ?? [];
   const rows: [string, string, "ok" | "warn" | "off"][] = dbg && on
     ? [
-        ["You", dbg.present ? "At your desk" : "Not in view. After 10 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
+        ["You", dbg.present ? "At your desk" : `Not in view. ${!settings.cam.away ? "Pausing when you leave is off in Settings." : `After ${settings.awaySec < 60 ? `${settings.awaySec} seconds` : `${settings.awaySec / 60} min`} this pauses the timer.`}`, dbg.present ? "ok" : "warn"],
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
         ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.posture === "hunched" ? "Hunched. Nudges after 3 minutes of this." : dbg.posture === "good" ? "Good" : "Needs your shoulders in view", dbg.posture === "hunched" ? "warn" : dbg.posture === "good" ? "ok" : "off"],

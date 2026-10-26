@@ -9,7 +9,8 @@ import Flower from "./Flower";
 import Ring from "./Ring";
 import type { Helpers } from "../lib/bridge";
 import Plant from "./Plant";
-import { IconChart, IconGear, IconFlame, IconPlus } from "./Icons";
+import type { ToastData } from "./Toast";
+import { IconChart, IconClose, IconGear, IconFlame, IconPlus } from "./Icons";
 
 interface Props {
   settings: Settings;
@@ -24,13 +25,17 @@ interface Props {
   onCamCheck: () => void;
   helpers: Helpers;
   updateSettings: (p: Partial<Settings>) => void;
+  onToast: (t: Omit<ToastData, "id">) => void;
+  /** Shown above the greeting when the blocker kept a copy of history this browser lost. */
+  restore?: { count: number; savedAt: number; onRestore: () => void; onDismiss: () => void } | null;
 }
 
-export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, onTest, onCamCheck, helpers, updateSettings }: Props) {
+export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, onTest, onCamCheck, helpers, updateSettings, onToast, restore }: Props) {
   const [subject, setSubject] = useState(settings.lastSubject || "General");
   const [adding, setAdding] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   const [pressed, setPressed] = useState(false);
+  const [panel, setPanel] = useState(false);
   const addRef = useRef<HTMLInputElement>(null);
 
   const today = todayMinutes(sessions, now);
@@ -98,7 +103,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
-      if (e.code === "Space" && tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "BUTTON") {
+      if (e.code === "Space" && !panel && tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "BUTTON") {
         e.preventDefault();
         go();
       }
@@ -115,9 +120,23 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
     setAdding(false);
   };
 
+  // Removing is one click, so it always comes with an Undo.
   const removeSubject = (name: string) => {
-    updateSettings({ subjects: settings.subjects.filter((s) => s !== name) });
-    if (subject === name) setSubject("General");
+    const before = settings.subjects;
+    const wasPicked = subject === name;
+    updateSettings({ subjects: before.filter((s) => s !== name) });
+    if (wasPicked) setSubject("General");
+    onToast({
+      icon: "🗑️",
+      text: `Removed ${name}. Your past sessions keep their hours.`,
+      action: {
+        label: "Undo",
+        run: () => {
+          updateSettings({ subjects: before });
+          if (wasPicked) setSubject(name);
+        },
+      },
+    });
   };
 
   const goalHit = today >= goalMin;
@@ -142,6 +161,18 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
 
       <div className="home-grid">
         <main className="home-main">
+          {restore && (
+            <div className="restore-banner" role="status">
+              <span>
+                <b>Your history isn't in this browser any more.</b>
+                The blocker kept a copy: {restore.count} {restore.count === 1 ? "session" : "sessions"}, saved {new Date(restore.savedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}.
+              </span>
+              <span className="restore-btns">
+                <button className="big-btn small" onClick={restore.onRestore}>Bring it back</button>
+                <button className="link-btn" onClick={restore.onDismiss}>Not now</button>
+              </span>
+            </div>
+          )}
           <p className="greeting">{greeting(settings.name, new Date(now))}</p>
 
           <div className={`start-wrap ${pressed ? "pressed" : ""}`}>
@@ -165,23 +196,25 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
           <section className="setup" aria-label="Session setup">
             <div className="chips" role="radiogroup" aria-label="Subject">
               {subjects.map((s) => (
-                <span key={s} className="chip-wrap">
+                <span key={s} className={`chip-wrap ${s === "General" ? "" : "removable"}`}>
                   <button
                     role="radio"
                     aria-checked={s === subject}
                     className={`chip ${s === subject ? "on" : ""}`}
                     style={{ "--hue": subjectHue(s) } as React.CSSProperties}
                     onClick={() => setSubject(s)}
-                    onContextMenu={(e) => {
-                      if (s === "General") return;
-                      e.preventDefault();
-                      removeSubject(s);
+                    onKeyDown={(e) => {
+                      if (s !== "General" && (e.key === "Delete" || e.key === "Backspace")) removeSubject(s);
                     }}
-                    title={s === "General" ? undefined : "Right-click to remove"}
                   >
                     <span className="chip-dot" />
                     {s}
                   </button>
+                  {s !== "General" && (
+                    <button className="chip-x" aria-label={`Remove ${s}`} title={`Remove ${s}`} onClick={() => removeSubject(s)}>
+                      <IconClose />
+                    </button>
+                  )}
                 </span>
               ))}
               {adding ? (
@@ -206,48 +239,17 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
               )}
             </div>
 
-            <div className="timer-edit" aria-label="Timer">
-            <div className="seg mini" role="radiogroup" aria-label="Timer mode">
-              <button role="radio" aria-checked={settings.mode === "pomodoro"} className={settings.mode === "pomodoro" ? "on" : ""} onClick={() => updateSettings({ mode: "pomodoro" })}>Pomodoro</button>
-              <button role="radio" aria-checked={settings.mode === "flow"} className={settings.mode === "flow" ? "on" : ""} onClick={() => updateSettings({ mode: "flow" })}>Flow</button>
-            </div>
-            {settings.mode === "pomodoro" ? (
-              <>
-                <MinField label="Focus" value={settings.focusMin} min={5} max={120} step={5} onChange={(v) => updateSettings({ focusMin: v })} />
-                <MinField label="Break" value={settings.shortMin} min={1} max={30} step={1} onChange={(v) => updateSettings({ shortMin: v })} />
-              </>
-            ) : (
-              <span className="timer-note">Counts up, no breaks</span>
-            )}
-            <button className="link-btn" onClick={onSettings}>{settings.lockIn ? "Lock-in on" : "Lock-in off"}</button>
-          </div>
-
-          <div className="helper-row">
-            <button className={`helpers ${settings.camera ? "ok" : ""}`} onClick={onSettings} title="Camera coach settings">
-              <span className={`helper ${settings.camera ? "on" : ""}`}>
-                <span className="helper-dot" />
-                {settings.camera ? "Camera coach on" : "Camera coach off"}
-              </span>
-            </button>
-            <button className={`helpers ${helpers.blocker && helpers.closer ? "ok" : ""}`} onClick={onSetup}>
-              {helpers.blocker ? (
-                <>
-                  <span className="helper on"><span className="helper-dot" />Site blocker</span>
-                  <span className={`helper ${helpers.closer ? "on" : ""}`}><span className="helper-dot" />Game closer</span>
-                </>
-              ) : (
-                <>
-                  <span className="helper"><span className="helper-dot" />Turn on blocking</span>
-                  <span className="helpers-time">5 min setup</span>
-                </>
-              )}
-            </button>
-            </div>
-            <div className="home-links">
-              <button className="link-btn" onClick={onCamCheck}>See what the camera sees</button>
-              <span className="sep" aria-hidden="true">·</span>
-              <button className="link-btn" onClick={onTest} title="1 minute focus, 30 second break, nothing saved">Test session</button>
-            </div>
+            <SessionLine
+              settings={settings}
+              helpers={helpers}
+              open={panel}
+              setOpen={setPanel}
+              updateSettings={updateSettings}
+              onSettings={onSettings}
+              onSetup={onSetup}
+              onTest={onTest}
+              onCamCheck={onCamCheck}
+            />
           </section>
         </main>
 
@@ -258,7 +260,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
             onClick={() => { setPoke((p) => p + 1); setLineN((n) => n + 1); }}
             aria-label="Poke your plant"
           >
-            <Plant stage={stage} hours={hours} size={230} wilted={!st.todayDone && st.days === 0 && sessions.length > 0} />
+            <Plant stage={stage} hours={hours} size={210} wilted={!st.todayDone && st.days === 0 && sessions.length > 0} />
           </button>
           <div className="garden-info">
             <b>{stage >= 12 ? (earnedFlowers.length > 1 ? `${earnedFlowers.length} flowers` : "Fully grown") : `Stage ${stage} of 12`}</b>
@@ -329,6 +331,75 @@ function MinField({ label, value, min, max, step, onChange }: { label: string; v
       />
       <span className="min-unit">min</span>
       <button aria-label={`More ${label.toLowerCase()} time`} disabled={value >= max} onClick={() => onChange(Math.min(max, value + step))}>+</button>
+    </div>
+  );
+}
+
+/** One tidy line under Start that sums up the session. Click it to change any of it. */
+function SessionLine({ settings, helpers, open, setOpen, updateSettings, onSettings, onSetup, onTest, onCamCheck }: {
+  settings: Settings; helpers: Helpers; open: boolean; setOpen: (v: boolean) => void; updateSettings: (p: Partial<Settings>) => void;
+  onSettings: () => void; onSetup: () => void; onTest: () => void; onCamCheck: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    addEventListener("pointerdown", away);
+    addEventListener("keydown", esc);
+    return () => { removeEventListener("pointerdown", away); removeEventListener("keydown", esc); };
+  }, [open, setOpen]);
+  const go = (fn: () => void) => () => { setOpen(false); fn(); };
+  const pomodoro = settings.mode === "pomodoro";
+  const blocking = helpers.blocker && helpers.closer;
+  return (
+    <div className="session-line" ref={box}>
+      <button className={`session-pill ${open ? "open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open} aria-controls="session-panel">
+        <span className="sp-what">
+          {pomodoro ? <><b>{settings.focusMin}</b><i>/</i><b>{settings.shortMin}</b> min</> : <b>Flow</b>}
+        </span>
+        <span className="sp-sep" aria-hidden="true" />
+        <span className={`sp-flag ${settings.lockIn ? "on" : ""}`} title={settings.lockIn ? "Lock-in on" : "Lock-in off"}>Lock-in</span>
+        <span className={`sp-flag ${settings.camera ? "on" : ""}`} title={settings.camera ? "Camera coach on" : "Camera coach off"}>Camera</span>
+        <span className={`sp-flag ${blocking ? "on" : helpers.blocker ? "half" : ""}`} title={blocking ? "Site blocker and game closer on" : helpers.blocker ? "Site blocker on, game closer off" : "Blocking isn't set up"}>Blocking</span>
+        <svg className="sp-caret" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg>
+      </button>
+      {open && (
+        <div className="session-panel card" id="session-panel" role="dialog" aria-label="Session options">
+          <div className="seg mini" role="radiogroup" aria-label="Timer mode">
+            <button role="radio" aria-checked={pomodoro} className={pomodoro ? "on" : ""} onClick={() => updateSettings({ mode: "pomodoro" })}>Pomodoro</button>
+            <button role="radio" aria-checked={!pomodoro} className={!pomodoro ? "on" : ""} onClick={() => updateSettings({ mode: "flow" })}>Flow</button>
+          </div>
+          {pomodoro ? (
+            <div className="sp-fields">
+              <MinField label="Focus" value={settings.focusMin} min={5} max={120} step={5} onChange={(v) => updateSettings({ focusMin: v })} />
+              <MinField label="Break" value={settings.shortMin} min={1} max={30} step={1} onChange={(v) => updateSettings({ shortMin: v })} />
+            </div>
+          ) : (
+            <p className="timer-note">Counts up with no breaks. End it when you're done.</p>
+          )}
+          <label className="toggle-row sp-row">
+            <span>Lock-in<small>Wait {settings.lockInSec} s before you can end early</small></span>
+            <input id="home-lockin" type="checkbox" className="toggle" checked={settings.lockIn} onChange={(e) => updateSettings({ lockIn: e.target.checked })} />
+          </label>
+          <label className="toggle-row sp-row">
+            <span>Camera coach<small>Pauses when you leave, nudges you off your phone</small></span>
+            <input id="home-camera" type="checkbox" className="toggle" checked={settings.camera} onChange={(e) => updateSettings({ camera: e.target.checked })} />
+          </label>
+          <button className="sp-row sp-helpers" onClick={go(onSetup)}>
+            <span className={`helper ${helpers.blocker ? "on" : ""}`}><span className="helper-dot" />Site blocker</span>
+            <span className={`helper ${helpers.closer ? "on" : ""}`}><span className="helper-dot" />Game closer</span>
+            <span className="sp-go">{blocking ? "Details" : "Set up"} ›</span>
+          </button>
+          <div className="home-links">
+            <button className="link-btn" onClick={go(onCamCheck)}>See what the camera sees</button>
+            <span className="sep" aria-hidden="true">·</span>
+            <button className="link-btn" onClick={go(onTest)} title="1 minute focus, 30 second break, nothing saved">Test session</button>
+            <span className="sep" aria-hidden="true">·</span>
+            <button className="link-btn" onClick={go(onSettings)}>All settings</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

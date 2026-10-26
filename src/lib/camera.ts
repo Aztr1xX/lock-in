@@ -190,7 +190,7 @@ export async function listCameras(): Promise<MediaDeviceInfo[]> {
   }
 }
 
-const AWAY_MS = 10_000;
+const AWAY_MS = 10_000; // default; Settings can change it
 const PERSON_SCORE = 0.45;
 const PERSON_KEEP = 3_000; // a person sighting counts as "here" for this long
 const BACK_MS = 2_000;
@@ -215,7 +215,7 @@ const MIN_DARK = 0.25; // share of dark pixels. His phone is black (a card in th
 const MIN_SHARP = 0.35; // edge strength next to yours; a blurred background is far lower
 const HAND_REACH = 0.16; // a wrist this close to the box (of frame width) means it's in hand
 const FRAME_MS = 10_000;
-const NORMAL = { away: AWAY_MS, calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
+const NORMAL = { calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
 // Test runs: everything fires fast so you can try it in a minute.
 const QUICK = { away: 5_000, calibrate: 10_000, postureHold: 15_000, postureCool: 30_000, phoneCool: 20_000, drowsyCool: 30_000 };
 
@@ -278,6 +278,12 @@ export class FocusCamera {
   private k = NORMAL;
   setQuick(on: boolean) {
     this.k = on ? QUICK : NORMAL;
+  }
+
+  /** How long you can be out of view before the timer pauses. Test runs keep their quick 5 s. */
+  private awayMs = AWAY_MS;
+  setAwayMs(ms: number) {
+    this.awayMs = Math.max(3_000, ms);
   }
 
   /**
@@ -499,7 +505,7 @@ export class FocusCamera {
       }
     } else {
       this.seenSince = 0;
-      if (!this.isAway && now - this.lastSeen >= this.k.away) {
+      if (!this.isAway && now - this.lastSeen >= (this.k === QUICK ? QUICK.away : this.awayMs)) {
         this.isAway = true;
         this.counts.away++;
         if (this.features.away) this.onEvent("away");

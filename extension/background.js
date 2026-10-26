@@ -101,7 +101,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       const st = await getState();
       reply({ locked: isLocked(st), ...st });
     } else if (msg?.kind === "helperStatus") {
-      reply({ helper: !!(await helperCall("/status")) });
+      const { backupMeta } = await chrome.storage.local.get(["backupMeta"]);
+      reply({ helper: !!(await helperCall("/status")), backup: backupMeta ?? null });
+    } else if (msg?.kind === "backup") {
+      reply(await saveBackup(msg.data));
+    } else if (msg?.kind === "getBackup") {
+      const { backup } = await chrome.storage.local.get(["backup"]);
+      reply({ data: backup ?? null });
     } else if (msg?.kind === "allowChannel") {
       const st = await getState();
       if (!st.allowChannels.includes(msg.channel)) {
@@ -116,6 +122,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   })();
   return true;
 });
+
+// A copy of your Lock In history, so clearing Chrome's site data can't wipe your plant
+// and streak. Extension storage isn't touched when a site's data is cleared.
+// It never swaps a copy for a much smaller one: if the app turns up nearly empty,
+// that's a wiped browser, and the app offers to bring this copy back instead.
+const BACKUP_SLACK = 5;
+async function saveBackup(data) {
+  if (!data || !Array.isArray(data.sessions)) return { ok: false };
+  const { backup, backupMeta } = await chrome.storage.local.get(["backup", "backupMeta"]);
+  const had = backup?.sessions?.length ?? 0;
+  const n = data.sessions.length;
+  if (had > 0 && (n === 0 || n < had - BACKUP_SLACK)) return { ok: true, kept: true, backup: backupMeta ?? null };
+  const meta = { count: n, savedAt: data.savedAt ?? Date.now() };
+  // The previous copy is kept as well, one step back.
+  await chrome.storage.local.set({ backup: data, backupMeta: meta, ...(backup ? { backupPrev: backup } : {}) });
+  return { ok: true, kept: false, backup: meta };
+}
 
 chrome.alarms.create("lockin-tick", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(async () => {
