@@ -27,3 +27,28 @@
 .lockin-primary { background: #5ee0a0; color: #062016; border: 0; }
 .lockin-ghost { background: transparent; color: #8da39b; border: 1px solid #243540; }
 .lockin-ghost:disabled { opacity: 0.6; cursor: default; }
+
+/* Home feed hidden during a session; the search bar stays. */
+html.lockin-nofeed ytd-browse[page-subtype="home"] #primary,
+html.lockin-nofeed ytd-browse[page-subtype="home"] #header,
+html.lockin-nofeed ytd-browse[page-subtype="home"] ytd-rich-grid-renderer,
+html.lockin-nofeed ytd-browse[page-subtype="home"] #chips-wrapper { display: none !important; }
+/* No rabbit holes while locked in: no Shorts shelves, no up-next, no end-screen cards. */
+html.lockin-on ytd-reel-shelf-renderer,
+html.lockin-on ytd-rich-shelf-renderer[is-shorts],
+html.lockin-on ytd-watch-flexy #related,
+html.lockin-on .ytp-endscreen-content,
+html.lockin-on .ytp-ce-element,
+html.lockin-on ytd-guide-entry-renderer:has(a[title="Shorts"]),
+html.lockin-on ytd-mini-guide-entry-renderer[aria-label="Shorts"] { display: none !important; }
+.lockin-search-prompt {
+  position: fixed; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 2000; width: min(440px, calc(100vw - 32px));
+  background: #152128; border: 1px solid #243540; border-radius: 24px; padding: 28px 26px; text-align: center; color: #e9f2ee;
+  font-family: "Segoe UI", system-ui, sans-serif; box-shadow: 0 30px 80px rgba(0,0,0,0.4); animation: lockin-pop 0.4s cubic-bezier(0.22,1,0.36,1) both;
+}
+.lockin-search-prompt h2 { margin: 6px 0 6px; font-size: 21px; line-height: 1.25; font-weight: 800; }
+.lockin-search-prompt p { margin: 0 0 16px; color: #8da39b; font-size: 14.5px; line-height: 1.5; }
+.lockin-search-prompt button { font: 700 15px "Segoe UI", system-ui, sans-serif; border-radius: 999px; padding: 12px 22px; cursor: pointer; background: #5ee0a0; color: #062016; border: 0; }
+.lockin-ring.small { width: 40px; height: 40px; -webkit-mask: radial-gradient(circle, transparent 10px, #000 11px); mask: radial-gradient(circle, transparent 10px, #000 11px); }
+.lockin-leave { margin: 14px 0 0; color: #8da39b; font-size: 13px; }
+.lockin-leave b { color: #ffb86b; font-variant-numeric: tabular-nums; }

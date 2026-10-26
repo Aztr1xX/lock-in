@@ -5,6 +5,7 @@ import {
 } from "./lib/store";
 import { advance, breakNow, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed, sessionSettings } from "./lib/timer";
 import { type CamEvent, type CamStatus, FocusCamera } from "./lib/camera";
+import { canPopOut, openPopout } from "./lib/popout";
 import { addFrame, deleteFrames } from "./lib/timelapse";
 import Toast, { type ToastData } from "./components/Toast";
 import { breakIdeas } from "./lib/content";
@@ -35,6 +36,8 @@ export default function App() {
   const [camStatus, setCamStatus] = useState<CamStatus>({ state: "off", present: false, faceVisible: false });
   const camRef = useRef<FocusCamera | null>(null);
   const framesRef = useRef(0);
+  const popRef = useRef<Window | null>(null);
+  const [popped, setPopped] = useState(false);
   // Camera events arrive outside React, so they act through the latest handlers.
   const handlers = useRef<{ onCam: (e: CamEvent) => void }>({ onCam: () => {} });
 
@@ -76,6 +79,7 @@ export default function App() {
     cam.setQuick(activeTest);
     void cam.start();
     return () => {
+      popRef.current?.close();
       cam.stop();
       if (camRef.current === cam) camRef.current = null;
     };
@@ -276,6 +280,41 @@ export default function App() {
     });
   }, []);
 
+  // The pop-out window reads the latest session state each frame.
+  const live = useRef({ active, eff });
+  live.current = { active, eff };
+  const popOut = useCallback(async () => {
+    const cam = camRef.current;
+    if (!cam || popRef.current) return;
+    try {
+      const w = await openPopout(cam, {
+        overlay: () => live.current.eff.overlay,
+        info: () => {
+          const a = live.current.active;
+          if (!a) return null;
+          const t = Date.now();
+          const el = phaseElapsed(a, t);
+          const onBreak = a.phase !== "focus";
+          return {
+            clock: fmtClock(a.mode === "pomodoro" ? a.phaseDurMs - el : el),
+            label: a.pausedAt ? "Paused" : onBreak ? "Break" : a.subject,
+            onBreak,
+          };
+        },
+        onClose: () => {
+          popRef.current = null;
+          setPopped(false);
+        },
+      });
+      if (w) {
+        popRef.current = w;
+        setPopped(true);
+      }
+    } catch {
+      showToast({ icon: "🪟", text: "Couldn't pop the camera out. Try clicking the button again." });
+    }
+  }, [showToast]);
+
   const liveFocusMin = useMemo(() => (active ? focusMs(active, now) / MIN : 0), [active, now]);
 
   let screen;
@@ -291,6 +330,8 @@ export default function App() {
         camStatus={camStatus}
         cam={camRef.current}
         onToggleSelf={() => updateSettings({ showSelf: !settings.showSelf })}
+        popped={popped}
+        onPopOut={canPopOut() ? popOut : null}
         onCamCheck={() => setCamCheck(true)}
         onSkipBreak={skipBreak}
         onFinish={finish}
@@ -341,6 +382,7 @@ export default function App() {
           cam={active ? camRef.current : null}
           settings={settings}
           onClose={() => setCamCheck(false)}
+          onOverlay={(overlay) => updateSettings({ overlay })}
           onToggleSelf={active ? () => updateSettings({ showSelf: !settings.showSelf }) : undefined}
         />
       )}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CamStatus, FocusCamera } from "../lib/camera";
 import { drawCam } from "../lib/camDraw";
-import type { Active, Session, Settings } from "../lib/store";
+import type { Active, Overlay, Session, Settings } from "../lib/store";
 import { fmtClock, fmtDur, focusMs, MIN, phaseElapsed } from "../lib/timer";
 import { breakIdeas, lockInLines } from "../lib/content";
 import { todayMinutes } from "../lib/stats";
@@ -20,10 +20,12 @@ interface Props {
   camStatus: CamStatus;
   cam: FocusCamera | null;
   onToggleSelf: () => void;
+  popped: boolean;
+  onPopOut: (() => void) | null;
   onCamCheck: () => void;
 }
 
-export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, cam, onCamCheck, onToggleSelf }: Props) {
+export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, cam, onCamCheck, onToggleSelf, popped, onPopOut }: Props) {
   const [ending, setEnding] = useState(false);
   const [ideaShift, setIdeaShift] = useState(0);
   const onBreak = active.phase !== "focus";
@@ -86,7 +88,7 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
           {active.goal && <span className="focus-goal">{active.goal}</span>}
         </div>
         <div className="focus-badges">
-          {settings.camera && <CamBubble status={camStatus} cam={cam} showSelf={settings.showSelf} onOpen={onCamCheck} onToggle={onToggleSelf} />}
+          {settings.camera && <CamBubble status={camStatus} cam={cam} showSelf={settings.showSelf} overlay={settings.overlay} popped={popped} onOpen={onCamCheck} onToggle={onToggleSelf} onPopOut={onPopOut} />}
           {active.test && <div className="test-badge" title="Short timers, nothing gets saved">Test run</div>}
           {settings.lockIn && (
             <div className="lock-badge" title="Lock-in mode is on">
@@ -196,9 +198,11 @@ function LockInGate({ seconds, focused, onStay, onEnd }: { seconds: number; focu
   );
 }
 
-function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamStatus; cam: FocusCamera | null; showSelf: boolean; onOpen: () => void; onToggle: () => void }) {
+function CamBubble({ status, cam, showSelf, overlay, popped, onOpen, onToggle, onPopOut }: { status: CamStatus; cam: FocusCamera | null; showSelf: boolean; overlay: Overlay; popped: boolean; onOpen: () => void; onToggle: () => void; onPopOut: (() => void) | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const show = useRef(overlay);
+  show.current = overlay;
   const on = status.state === "on" && !!cam;
   // Drag it anywhere; it remembers where you left it. A press without a drag opens the full view.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(() => {
@@ -216,7 +220,7 @@ function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamSta
     return () => removeEventListener("resize", fit);
   }, []);
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest(".cam-pip-hide")) return;
+    if ((e.target as HTMLElement).closest(".cam-pip-btns")) return;
     const r = box.current!.getBoundingClientRect();
     drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
     box.current!.setPointerCapture(e.pointerId);
@@ -241,17 +245,21 @@ function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamSta
     });
   };
   useEffect(() => {
-    if (!on || !showSelf || !cam) return;
+    if (!on || !showSelf || !cam || popped) return;
     let raf = 0, last = 0;
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
       if (t - last < 66) return; // ~15 fps is plenty for a preview
       last = t;
-      if (canvas.current) drawCam(canvas.current, cam);
+      if (canvas.current) drawCam(canvas.current, cam, show.current);
+      // Border flashes red while it sees you on your phone, orange for a long hunch.
+      const a = cam.debug.alert;
+      box.current?.classList.toggle("alert-phone", a === "phone");
+      box.current?.classList.toggle("alert-posture", a === "posture");
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [on, showSelf, cam]);
+  }, [on, showSelf, cam, popped]);
 
   const label =
     status.state === "loading" ? "Starting camera…"
@@ -261,6 +269,15 @@ function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamSta
     : "Can't see you";
   const tone = status.state !== "on" ? status.state : status.present ? "here" : "gone";
 
+  if (popped && on) {
+    return (
+      <button className="cam-bubble here popped" onClick={onOpen} title="The camera is in its own window. Click for the full camera check." aria-label="Camera is popped out">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="2" y="4" width="20" height="16" rx="2" /><rect x="12" y="11" width="8" height="7" rx="1" fill="currentColor" />
+        </svg>
+      </button>
+    );
+  }
   if (!showSelf || !on) {
     return (
       <button className={`cam-bubble ${tone}`} onClick={on ? onToggle : onOpen} title={on ? "Show the camera" : label} aria-label={on ? "Show the camera" : label}>
@@ -291,7 +308,16 @@ function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamSta
         <canvas ref={canvas} width={320} height={240} />
       </div>
       <span className="cam-pip-status"><i />{label}</span>
-      <button className="cam-pip-hide" onClick={onToggle} aria-label="Hide the camera preview" title="Hide">–</button>
+      <div className="cam-pip-btns">
+        {onPopOut && (
+          <button className="cam-pip-btn" onClick={onPopOut} aria-label="Pop out into its own window" title="Pop out: floats over everything, drag it to any screen">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 4h6v6" /><path d="M20 4l-8 8" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+            </svg>
+          </button>
+        )}
+        <button className="cam-pip-btn cam-pip-hide" onClick={onToggle} aria-label="Hide the camera preview" title="Hide">–</button>
+      </div>
     </div>
   );
 }

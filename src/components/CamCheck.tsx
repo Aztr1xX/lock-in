@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { type CamDebug, type CamStatus, FocusCamera } from "../lib/camera";
-import type { Settings } from "../lib/store";
+import type { Overlay, Settings } from "../lib/store";
 import { IconClose } from "./Icons";
 import { drawCam, nice } from "../lib/camDraw";
 
@@ -10,16 +10,29 @@ interface Props {
   settings: Settings;
   onClose: () => void;
   onToggleSelf?: () => void;
+  onOverlay: (o: Overlay) => void;
 }
+
+/** Each thing it can draw, as a toggle. The swatch doubles as the legend. */
+const LAYERS: [keyof Overlay, string, string][] = [
+  ["you", "You", "k-you"],
+  ["face", "Face", "k-face"],
+  ["head", "Head", "k-head"],
+  ["shoulders", "Shoulders", "k-shoulder"],
+  ["hands", "Hands", "k-wrist"],
+  ["things", "Phone and objects", "k-phone"],
+];
 
 const W = 640, H = 480;
 
 /** Shows what the camera sees and what it makes of it, live. Nothing leaves this PC. */
-export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleSelf }: Props) {
+export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleSelf, onOverlay }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [cam, setCam] = useState<FocusCamera | null>(sessionCam);
   const [status, setStatus] = useState<CamStatus>(sessionCam?.status ?? { state: "loading", present: false, faceVisible: false });
   const [dbg, setDbg] = useState<CamDebug | null>(null);
+  const show = useRef(settings.overlay);
+  show.current = settings.overlay;
 
   // A quick look from Home gets its own camera, switched off again on close.
   useEffect(() => {
@@ -37,7 +50,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
     let raf = 0, last = 0;
     const draw = (t: number) => {
       raf = requestAnimationFrame(draw);
-      if (!canvas.current || !drawCam(canvas.current, cam)) return;
+      if (!canvas.current || !drawCam(canvas.current, cam, show.current)) return;
       if (t - last > 250) {
         last = t;
         setDbg({ ...cam.debug });
@@ -63,7 +76,9 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
         ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.posture === "hunched" ? "Hunched. Nudges after 3 minutes of this." : dbg.posture === "good" ? "Good" : "Needs your shoulders in view", dbg.posture === "hunched" ? "warn" : dbg.posture === "good" ? "ok" : "off"],
-        ["Phone", phones.length ? `${phones[0].why[0].toUpperCase()}${phones[0].why.slice(1)}. Nudges after 3 sightings in 6 seconds (${Math.min(3, dbg.phoneHits)}/3).` : "None in your hand", phones.length ? "warn" : "ok"],
+        ["Phone", phones.length || dbg.phoneSure > 0
+          ? `${phones.length ? phones[0].why[0].toUpperCase() + phones[0].why.slice(1) : "Not seen right now"}. ${Math.round(dbg.phoneSure * 100)}% sure you're on it. It only nudges at 100%, after about 8 steady seconds.`
+          : "None in your hand", dbg.alert === "phone" ? "warn" : "ok"],
       ]
     : [];
 
@@ -88,13 +103,18 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
           )}
         </div>
 
-        <ul className="cc-legend" aria-hidden="true">
-          <li><i className="k-head" />You</li>
-          <li><i className="k-shoulder" />Shoulders</li>
-          <li><i className="k-wrist" />Hands</li>
-          <li><i className="k-phone" />Phone</li>
-          <li><i className="k-ignored" />Ignored</li>
-        </ul>
+        <div className="cc-layers" role="group" aria-label="What to show on the camera">
+          {LAYERS.map(([k, label, swatch]) => (
+            <button
+              key={k}
+              className={`cc-layer ${settings.overlay[k] ? "on" : ""}`}
+              aria-pressed={settings.overlay[k]}
+              onClick={() => onOverlay({ ...settings.overlay, [k]: !settings.overlay[k] })}
+            >
+              <i className={swatch} />{label}
+            </button>
+          ))}
+        </div>
 
         {rows.length > 0 && (
           <dl className="cc-rows">

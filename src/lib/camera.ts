@@ -44,7 +44,11 @@ export interface CamDebug {
   yawning: boolean;
   lookingDown: boolean;
   phoneHits: number;
+  /** How sure it is that you're on your phone right now, 0..1. It warns at 1. */
+  phoneSure: number;
   posture: "calibrating" | "good" | "hunched" | "unknown";
+  /** What the camera border should flash: red for phone, orange for posture. */
+  alert: "phone" | "posture" | null;
 }
 
 export interface TracePoint {
@@ -167,8 +171,12 @@ const AWAY_MS = 10_000;
 const PERSON_SCORE = 0.45;
 const PERSON_KEEP = 3_000; // a person sighting counts as "here" for this long
 const BACK_MS = 2_000;
-const PHONE_HITS = 3; // phone sightings within the last PHONE_WINDOW checks (1 s apart)
-const PHONE_WINDOW = 6;
+// A phone warning needs a steady, confident sighting: seen in 6 of the last 8 checks
+// (about 8 seconds), at 50% or more on average. One-off false sightings never add up.
+const PHONE_HITS = 6;
+const PHONE_WINDOW = 8;
+const PHONE_MEAN = 0.5;
+const POSTURE_FLASH = 10_000; // hunched this long before the border turns orange
 const PHONE_COOLDOWN = 3 * 60_000;
 const POSTURE_HOLD = 3 * 60_000;
 const POSTURE_COOLDOWN = 10 * 60_000;
@@ -204,7 +212,7 @@ export class FocusCamera {
   private isAway = false;
   // phone
   private phoneHits = 0;
-  private phoneLog: boolean[] = [];
+  private phoneLog: number[] = []; // best phone score per check, 0 when none
   private personAt = 0;
   private lastPhoneNudge = 0;
   // posture
@@ -227,7 +235,7 @@ export class FocusCamera {
   private snap = document.createElement("canvas");
   debug: CamDebug = {
     points: [], face: null, objects: [], present: false, faceVisible: false,
-    eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, posture: "unknown",
+    eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, phoneSure: 0, posture: "unknown", alert: null,
   };
 
   constructor(
@@ -246,6 +254,21 @@ export class FocusCamera {
   private k = NORMAL;
   setQuick(on: boolean) {
     this.k = on ? QUICK : NORMAL;
+  }
+
+  /**
+   * Which window's clock drives detection. A popped-out camera window stays visible,
+   * so its timers keep running at full speed even when this tab is in the background.
+   */
+  private host: Window = window;
+  setHost(w: Window | null) {
+    const next = w ?? window;
+    if (next === this.host) return;
+    if (this.timer) {
+      this.host.clearInterval(this.timer);
+      this.timer = next.setInterval(() => this.tick(), TICK_MS);
+    }
+    this.host = next;
   }
 
   setFeatures(f: CamFeatures) {
@@ -284,12 +307,12 @@ export class FocusCamera {
     if (!this.stream) return; // stopped while loading
     this.lastSeen = Date.now();
     this.setStatus({ state: "on" });
-    this.timer = window.setInterval(() => this.tick(), TICK_MS);
+    this.timer = this.host.setInterval(() => this.tick(), TICK_MS);
   }
 
   stop() {
     this.stopped = true;
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) this.host.clearInterval(this.timer);
     this.timer = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
@@ -398,7 +421,9 @@ export class FocusCamera {
       yawning,
       lookingDown: !!faceBox && !faceVisible,
       phoneHits: this.phoneHits,
+      phoneSure: this.phoneSure(),
       posture: !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
+      alert: this.phoneHits >= 4 && this.phoneSure() >= 0.6 ? "phone" : this.slouchSince && now - this.slouchSince >= POSTURE_FLASH ? "posture" : null,
     };
 
     if (present !== this.status.present || faceVisible !== this.status.faceVisible) this.setStatus({ present, faceVisible });
@@ -437,7 +462,7 @@ export class FocusCamera {
     }
 
     // phone
-    if (this.phoneHits >= PHONE_HITS && now - this.lastPhoneNudge > this.k.phoneCool) {
+    if (this.phoneSure() >= 1 && now - this.lastPhoneNudge > this.k.phoneCool) {
       this.lastPhoneNudge = now;
       this.phoneHits = 0;
       this.phoneLog = [];
@@ -498,7 +523,7 @@ export class FocusCamera {
     }
 
     // focus score for this minute
-    const good = present && this.phoneHits === 0 && !eyesClosed ? 1 : 0;
+    const good = present && this.phoneSure() < 0.6 && !eyesClosed ? 1 : 0;
     const mt = Math.floor(now / 60_000) * 60_000;
     if (this.minute.t !== mt) {
       this.flushMinute();
@@ -522,8 +547,16 @@ export class FocusCamera {
       objects.push({ ...box, label: o.label, score: o.score, ...this.judgePhone(o.label, o.score, box, wrists, o.dark, o.crop) });
     }
     this.debug = { ...this.debug, objects };
-    this.phoneLog = [...this.phoneLog, objects.some((o) => o.verdict === "phone")].slice(-PHONE_WINDOW);
-    this.phoneHits = this.phoneLog.filter(Boolean).length;
+    const best = Math.max(0, ...objects.filter((o) => o.verdict === "phone").map((o) => o.score));
+    this.phoneLog = [...this.phoneLog, best].slice(-PHONE_WINDOW);
+    this.phoneHits = this.phoneLog.filter((x) => x > 0).length;
+  }
+
+  private phoneSure() {
+    const seen = this.phoneLog.filter((x) => x > 0);
+    if (!seen.length) return 0;
+    const mean = seen.reduce((a, b) => a + b, 0) / seen.length;
+    return Math.min(1, seen.length / PHONE_HITS) * Math.min(1, mean / PHONE_MEAN);
   }
 
   /** Is this detection really a phone in your hand, or your calculator or iPad? */
@@ -536,14 +569,14 @@ export class FocusCamera {
     fromCrop: boolean,
   ): { verdict: DebugObject["verdict"]; why: string } {
     if (label !== "cell phone") return { verdict: "ignored", why: label === "remote" ? "looks like a calculator" : label === "laptop" || label === "tv" ? "looks like your iPad" : label };
-    if (score < 0.3) return { verdict: "ignored", why: "not sure enough" };
+    if (score < (fromCrop ? 0.45 : 0.4)) return { verdict: "ignored", why: "not sure enough" };
     if (box.w * box.h > MAX_PHONE_AREA) return { verdict: "ignored", why: "too big, probably your iPad" };
     if (dark < MIN_DARK) return { verdict: "ignored", why: "too light, probably your calculator" };
     const inHand = wrists.some((w) => w.x > box.x - HAND_REACH && w.x < box.x + box.w + HAND_REACH && w.y > box.y - HAND_REACH && w.y < box.y + box.h + HAND_REACH);
     if (inHand) return { verdict: "phone", why: "phone in your hand" };
     // Found in the close-up of your hands or chest: that's where a phone you're using is.
-    if (fromCrop && score >= 0.35) return { verdict: "phone", why: "phone in your hands" };
-    if (!wrists.length && score > 0.5) return { verdict: "phone", why: "phone (hands out of view)" };
+    if (fromCrop) return { verdict: "phone", why: "phone in your hands" };
+    if (!wrists.length && score > 0.55) return { verdict: "phone", why: "phone (hands out of view)" };
     return { verdict: "ignored", why: "phone on the desk, not in hand" };
   }
 

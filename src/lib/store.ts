@@ -28,6 +28,17 @@ export interface Settings {
   camera: boolean;
   cam: CamFeatures;
   showSelf: boolean;
+  overlay: Overlay;
+}
+
+/** What gets drawn over the camera picture. */
+export interface Overlay {
+  you: boolean;
+  face: boolean;
+  head: boolean;
+  shoulders: boolean;
+  hands: boolean;
+  things: boolean;
 }
 
 export interface Session {
@@ -79,6 +90,7 @@ export const defaultSettings: Settings = {
   camera: true,
   cam: { away: true, phone: true, posture: true, drowsy: true, timelapse: true },
   showSelf: true,
+  overlay: { you: true, face: true, head: true, shoulders: true, hands: true, things: true },
 };
 
 const K = { settings: "lockin.settings", sessions: "lockin.sessions", active: "lockin.active" };
@@ -103,7 +115,7 @@ function write(key: string, value: unknown) {
 
 export const loadSettings = (): Settings => {
   const saved = read<Partial<Settings>>(K.settings, {});
-  return { ...defaultSettings, ...saved, cam: { ...defaultSettings.cam, ...saved.cam } };
+  return { ...defaultSettings, ...saved, cam: { ...defaultSettings.cam, ...saved.cam }, overlay: { ...defaultSettings.overlay, ...saved.overlay } };
 };
 export const saveSettings = (s: Settings) => write(K.settings, s);
 export const loadSessions = (): Session[] => read<Session[]>(K.sessions, []);
