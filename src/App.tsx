@@ -3,7 +3,7 @@ import {
   type Active, type Session, type Settings,
   loadActive, loadSessions, loadSettings, saveActive, saveSessions, saveSettings, uid,
 } from "./lib/store";
-import { advance, breakNow, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed } from "./lib/timer";
+import { advance, breakNow, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed, sessionSettings } from "./lib/timer";
 import { type CamEvent, type CamStatus, FocusCamera } from "./lib/camera";
 import { addFrame, deleteFrames } from "./lib/timelapse";
 import Toast, { type ToastData } from "./components/Toast";
@@ -16,6 +16,7 @@ import Focus from "./components/Focus";
 import Done from "./components/Done";
 import Stats from "./components/Stats";
 import SettingsSheet from "./components/SettingsSheet";
+import CamCheck from "./components/CamCheck";
 
 type View = "home" | "stats";
 
@@ -23,7 +24,8 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [active, setActive] = useState<Active | null>(loadActive);
-  const [done, setDone] = useState<{ session: Session; saved: boolean; prevSessions: Session[] } | null>(null);
+  const [done, setDone] = useState<{ session: Session; saved: boolean; test: boolean; prevSessions: Session[] } | null>(null);
+  const [camCheck, setCamCheck] = useState(false);
   const [view, setView] = useState<View>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -60,6 +62,7 @@ export default function App() {
 
   // Camera: on for the whole session if it's switched on in Settings.
   const camOn = settings.camera;
+  const activeTest = !!active?.test;
   useEffect(() => {
     if (!activeId || !camOn) return;
     framesRef.current = 0;
@@ -70,6 +73,7 @@ export default function App() {
       (blob) => void addFrame(activeId, framesRef.current++, blob),
     );
     camRef.current = cam;
+    cam.setQuick(activeTest);
     void cam.start();
     return () => {
       cam.stop();
@@ -92,6 +96,9 @@ export default function App() {
     });
   }, []);
 
+  // Test runs swap in tiny timers; everything else reads the real settings.
+  const eff = useMemo(() => sessionSettings(settings, active), [settings, active]);
+
   const commitActive = useCallback((a: Active | null) => {
     saveActive(a);
     setActive(a);
@@ -110,14 +117,14 @@ export default function App() {
     let changed = false;
     while (phaseElapsed(a, now) >= a.phaseDurMs) {
       const endedAt = a.phaseStartedAt + a.pausedMsInPhase + a.phaseDurMs;
-      a = advance(a, settings, endedAt, breakIdeas.length);
+      a = advance(a, eff, endedAt, breakIdeas.length);
       changed = true;
     }
     if (changed) {
       if (settings.sound) (a.phase === "focus" ? chime.backToWork : chime.breakTime)();
       commitActive(a);
     }
-  }, [now, active, settings, commitActive]);
+  }, [now, active, settings, eff, commitActive]);
 
   // Tab title and live favicon ring.
   useEffect(() => {
@@ -139,28 +146,30 @@ export default function App() {
   }, [now, active]);
 
   const start = useCallback(
-    (subject: string, goal: string) => {
+    (subject: string, goal: string, test = false) => {
       primeAudio();
       const t = Date.now();
+      const mode = test ? "pomodoro" : settings.mode;
       const a: Active = {
         id: uid(),
         subject: subject || "General",
         goal: goal.trim(),
-        mode: settings.mode,
+        mode,
         startedAt: t,
         phase: "focus",
         phaseStartedAt: t,
-        phaseDurMs: settings.mode === "pomodoro" ? phaseDuration("focus", settings) : 0,
+        phaseDurMs: mode === "pomodoro" ? phaseDuration("focus", test ? sessionSettings(settings, { test } as Active) : settings) : 0,
         pausedAt: null,
         pausedMsInPhase: 0,
         focusMsBanked: 0,
         rounds: 0,
         breakIdea: 0,
+        test,
       };
       const subjects = settings.subjects.includes(a.subject) || a.subject === "General"
         ? settings.subjects
         : [...settings.subjects, a.subject];
-      updateSettings({ lastSubject: a.subject, subjects });
+      if (!test) updateSettings({ lastSubject: a.subject, subjects });
       if (settings.sound) chime.start();
       setNow(t);
       commitActive(a);
@@ -181,8 +190,8 @@ export default function App() {
   const takeBreak = useCallback(() => {
     if (!active) return;
     if (settings.sound) chime.breakTime();
-    commitActive(breakNow(active, settings, Date.now(), breakIdeas.length));
-  }, [active, settings, commitActive]);
+    commitActive(breakNow(active, eff, Date.now(), breakIdeas.length));
+  }, [active, settings, eff, commitActive]);
 
   handlers.current.onCam = (e: CamEvent) => {
     if (!active) return;
@@ -210,8 +219,8 @@ export default function App() {
   const skipBreak = useCallback(() => {
     if (!active || active.phase === "focus") return;
     if (settings.sound) chime.backToWork();
-    commitActive(advance(active, settings, Date.now(), breakIdeas.length));
-  }, [active, settings, commitActive]);
+    commitActive(advance(active, eff, Date.now(), breakIdeas.length));
+  }, [active, settings, eff, commitActive]);
 
   const finish = useCallback(() => {
     if (!active) return;
@@ -231,7 +240,8 @@ export default function App() {
       session.counts = { ...cam.counts };
     }
     if (framesRef.current) session.frames = framesRef.current;
-    const saved = session.focusMs >= MIN;
+    const test = !!active.test;
+    const saved = !test && session.focusMs >= MIN;
     const prev = sessions;
     if (saved) {
       const next = [...sessions, session];
@@ -242,7 +252,7 @@ export default function App() {
     sendSession(false);
     setToast(null);
     commitActive(null);
-    setDone({ session, saved, prevSessions: prev });
+    setDone({ session, saved, test, prevSessions: prev });
   }, [active, sessions, settings.sound, commitActive]);
 
   const rate = useCallback((id: string, rating: number) => {
@@ -269,14 +279,14 @@ export default function App() {
     screen = (
       <Focus
         active={active}
-        settings={settings}
+        settings={eff}
         now={now}
         sessions={sessions}
         onPause={() => pause()}
         onResume={resume}
         camStatus={camStatus}
         camVideo={camRef.current?.video ?? null}
-        onToggleSelf={() => updateSettings({ showSelf: !settings.showSelf })}
+        onCamCheck={() => setCamCheck(true)}
         onSkipBreak={skipBreak}
         onFinish={finish}
       />
@@ -288,7 +298,11 @@ export default function App() {
         sessions={sessions}
         settings={settings}
         onRate={(r) => rate(done.session.id, r)}
-        onClose={() => setDone(null)}
+        onClose={() => {
+          // Test runs leave nothing behind, time-lapse included.
+          if (done.test) void deleteFrames(done.session.id);
+          setDone(null);
+        }}
       />
     );
   } else if (view === "stats") {
@@ -304,6 +318,8 @@ export default function App() {
         onStats={() => setView("stats")}
         onSettings={() => setSettingsOpen(true)}
         onSetup={() => setSetupOpen(true)}
+        onTest={() => start(settings.lastSubject, "Test run", true)}
+        onCamCheck={() => setCamCheck(true)}
         helpers={helpers}
         updateSettings={updateSettings}
       />
@@ -315,6 +331,14 @@ export default function App() {
       {screen}
       {settingsOpen && <SettingsSheet settings={settings} update={updateSettings} onClose={() => setSettingsOpen(false)} />}
       <Toast toast={toast} onDone={() => setToast(null)} />
+      {camCheck && (
+        <CamCheck
+          cam={active ? camRef.current : null}
+          settings={settings}
+          onClose={() => setCamCheck(false)}
+          onToggleSelf={active ? () => updateSettings({ showSelf: !settings.showSelf }) : undefined}
+        />
+      )}
       {setupOpen && <SetupSheet helpers={helpers} onClose={() => setSetupOpen(false)} />}
     </>
   );

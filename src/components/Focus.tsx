@@ -18,19 +18,32 @@ interface Props {
   onFinish: () => void;
   camStatus: CamStatus;
   camVideo: HTMLVideoElement | null;
-  onToggleSelf: () => void;
+  onCamCheck: () => void;
 }
 
-export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, camVideo, onToggleSelf }: Props) {
+export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, camVideo, onCamCheck }: Props) {
   const [ending, setEnding] = useState(false);
   const [ideaShift, setIdeaShift] = useState(0);
   const onBreak = active.phase !== "focus";
   const paused = !!active.pausedAt;
-  const el = phaseElapsed(active, now);
+  // The ring and clock follow every animation frame so they glide instead of stepping.
+  const [frameNow, setFrameNow] = useState(now);
+  useEffect(() => {
+    if (paused) return;
+    let raf = 0;
+    const loop = () => {
+      setFrameNow(Date.now());
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [paused]);
+  const t = paused ? now : Math.max(now, frameNow);
+  const el = phaseElapsed(active, t);
   const pomodoro = active.mode === "pomodoro";
   const left = pomodoro ? active.phaseDurMs - el : el;
   const progress = pomodoro ? el / active.phaseDurMs : (el % (60 * MIN)) / (60 * MIN);
-  const focused = focusMs(active, now);
+  const focused = focusMs(active, t);
   const todayTotal = todayMinutes(sessions, now) + focused / MIN;
   const goalPct = Math.min(100, (todayTotal / settings.dailyGoalMin) * 100);
   const idea = breakIdeas[(active.breakIdea + ideaShift) % breakIdeas.length];
@@ -40,7 +53,7 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
   useEffect(() => setIdeaShift(0), [active.phase, active.rounds]);
 
   const requestEnd = () => {
-    if (settings.lockIn && !onBreak && focused >= MIN) setEnding(true);
+    if (settings.lockIn && !onBreak && focused >= (active.test ? 5000 : MIN)) setEnding(true);
     else onFinish();
   };
 
@@ -71,7 +84,8 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
           {active.goal && <span className="focus-goal">{active.goal}</span>}
         </div>
         <div className="focus-badges">
-          {settings.camera && <CamBubble status={camStatus} video={camVideo} showSelf={settings.showSelf} onToggle={onToggleSelf} />}
+          {settings.camera && <CamBubble status={camStatus} video={camVideo} showSelf={settings.showSelf} onToggle={onCamCheck} />}
+          {active.test && <div className="test-badge" title="Short timers, nothing gets saved">Test run</div>}
           {settings.lockIn && (
             <div className="lock-badge" title="Lock-in mode is on">
               <IconLock /> Locked in
@@ -199,7 +213,7 @@ function CamBubble({ status, video, showSelf, onToggle }: { status: CamStatus; v
     : "Can't see you right now";
   const tone = status.state !== "on" ? status.state : status.present ? "here" : "gone";
   return (
-    <button className={`cam-bubble ${tone} ${showSelf ? "self" : ""}`} onClick={onToggle} title={`${label} Click to ${showSelf ? "hide" : "show"} yourself.`} aria-label={label}>
+    <button className={`cam-bubble ${tone} ${showSelf ? "self" : ""}`} onClick={onToggle} title={`${label} Click to see what the camera sees.`} aria-label={label}>
       <div className="cam-face" ref={box}>
         {(!showSelf || status.state !== "on") && (
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

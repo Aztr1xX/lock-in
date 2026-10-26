@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import type { Session, Settings } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
 import { plantStage, streak, todayMinutes, totalHours } from "../lib/stats";
-import { confetti } from "../lib/fx";
+import { chime, confetti } from "../lib/fx";
 import Plant from "./Plant";
 import FocusStrip from "./FocusStrip";
 import Timelapse from "./Timelapse";
 import { BADGES, earned } from "../lib/badges";
+import { flowersAt } from "../lib/flowers";
+import Flower from "./Flower";
 
 interface Props {
   session: Session;
   saved: boolean;
+  test?: boolean;
   prevSessions: Session[];
   sessions: Session[];
   settings: Settings;
@@ -26,7 +29,7 @@ const faces = [
   { n: 5, label: "Locked in", face: "🔥" },
 ];
 
-export default function Done({ session, saved, prevSessions, sessions, settings, onRate, onClose }: Props) {
+export default function Done({ session, saved, test = false, prevSessions, sessions, settings, onRate, onClose }: Props) {
   const [rating, setRating] = useState<number | null>(null);
   const fired = useRef(false);
   const beforeStage = plantStage(totalHours(prevSessions));
@@ -41,11 +44,15 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
   const had = earned(prevSessions, settings);
   const now = earned(sessions, settings);
   const newBadges = BADGES.filter((b) => now.has(b.id) && !had.has(b.id));
+  const hoursAfter = totalHours(sessions);
+  const hadFlowers = flowersAt(totalHours(prevSessions)).length;
+  const newFlowers = flowersAt(hoursAfter).slice(hadFlowers);
 
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    if (hitGoal || grew || streakUp || newBadges.length) setTimeout(() => confetti({ x: innerWidth / 2, y: innerHeight * 0.3 }), 350);
+    if ((newFlowers.length || newBadges.length) && settings.sound) setTimeout(chime.sparkle, 900);
+    if (hitGoal || grew || streakUp || newBadges.length || newFlowers.length) setTimeout(() => confetti({ x: innerWidth / 2, y: innerHeight * 0.3 }), 350);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitGoal, grew, streakUp]);
 
@@ -64,7 +71,9 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
     if (saved) onRate(n);
   };
 
-  const headline = !saved
+  const headline = test
+    ? "Test run done. Nothing was saved."
+    : !saved
     ? "That one was too short to count."
     : session.focusMs >= 90 * MIN
       ? "Huge session."
@@ -84,7 +93,7 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
           <div><b>{st.days}</b><span>day streak</span></div>
         </div>
 
-        {saved && (session.trace?.length || session.frames) ? (
+        {(saved || test) && (session.trace?.length || session.frames) ? (
           <section className="cam-recap">
             {!!session.frames && <Timelapse sessionId={session.id} durationMs={session.end - session.start} />}
             {!!session.trace?.length && <FocusStrip trace={session.trace} />}
@@ -105,6 +114,13 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
             {grew && <li>Your plant reached stage {afterStage}</li>}
           </ul>
         )}
+
+        {newFlowers.map((f, i) => (
+          <div className="flower-unlock" key={f.kind} style={{ animationDelay: `${0.3 + i * 0.2}s` }}>
+            <Flower kind={f.kind} size={72} />
+            <span><small>New flower</small><b>{f.name}</b><em>{f.line}</em></span>
+          </div>
+        ))}
 
         {newBadges.length > 0 && (
           <div className="new-badges">
@@ -138,7 +154,7 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
         )}
 
         <div className="done-plant">
-          <Plant stage={afterStage} size={110} />
+          <Plant stage={afterStage} hours={hoursAfter} size={130} />
         </div>
 
         <button className="big-btn" onClick={onClose}>

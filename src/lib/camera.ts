@@ -23,6 +23,28 @@ export interface CamStatus {
   faceVisible: boolean;
 }
 
+export interface DebugObject {
+  x: number; y: number; w: number; h: number; // 0..1 of the frame
+  label: string;
+  score: number;
+  verdict: "phone" | "ignored";
+  why: string;
+}
+
+/** What the camera worked out on its last look. Drawn by the camera check screen. */
+export interface CamDebug {
+  points: { x: number; y: number; part: "head" | "shoulder" | "wrist" }[];
+  face: { x: number; y: number; w: number; h: number } | null;
+  objects: DebugObject[];
+  present: boolean;
+  faceVisible: boolean;
+  eyesClosed: boolean;
+  yawning: boolean;
+  lookingDown: boolean;
+  phoneHits: number;
+  posture: "calibrating" | "good" | "hunched" | "unknown";
+}
+
 export interface TracePoint {
   t: number; // minute start (ms)
   s: number; // focus score 0..1
@@ -69,8 +91,9 @@ function loadModels(): Promise<Models> {
           baseOptions: { modelAssetPath: "/mediapipe/efficientdet_lite0.tflite", delegate },
           runningMode: "VIDEO",
           scoreThreshold: 0.35,
-          categoryAllowlist: ["cell phone"],
-          maxResults: 2,
+          // Look for things that get mistaken for phones too, so they can be ruled out.
+          categoryAllowlist: ["cell phone", "remote", "laptop", "tv", "book", "keyboard"],
+          maxResults: 6,
         }),
       ),
     ]);
@@ -91,7 +114,15 @@ const EYES_CLOSED_MS = 2_500;
 const YAWN_MS = 1_500;
 const DROWSY_COOLDOWN = 10 * 60_000;
 const TICK_MS = 500;
+// Phone vs the other things on Ryan's desk. His phone is dark and small; his Casio is
+// light grey/white; his iPad is far bigger in frame.
+const MAX_PHONE_AREA = 0.12; // share of the frame; an iPad at desk distance is bigger
+const MAX_PHONE_LUMA = 0.55; // brighter than this is the white calculator, not the phone
+const HAND_REACH = 0.12; // a wrist this close to the box (of frame width) means it's in hand
 const FRAME_MS = 10_000;
+const NORMAL = { away: AWAY_MS, calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
+// Test runs: everything fires fast so you can try it in a minute.
+const QUICK = { away: 10_000, calibrate: 10_000, postureHold: 15_000, postureCool: 30_000, phoneCool: 20_000, drowsyCool: 30_000 };
 
 export class FocusCamera {
   video: HTMLVideoElement;
@@ -129,6 +160,11 @@ export class FocusCamera {
   // time-lapse
   private lastFrame = 0;
   private snap = document.createElement("canvas");
+  private probe = document.createElement("canvas");
+  debug: CamDebug = {
+    points: [], face: null, objects: [], present: false, faceVisible: false,
+    eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, posture: "unknown",
+  };
 
   constructor(
     private features: CamFeatures,
@@ -141,13 +177,23 @@ export class FocusCamera {
     this.video.playsInline = true;
     this.snap.width = 320;
     this.snap.height = 240;
+    this.probe.width = 160;
+    this.probe.height = 120;
+  }
+
+  private k = NORMAL;
+  setQuick(on: boolean) {
+    this.k = on ? QUICK : NORMAL;
   }
 
   setFeatures(f: CamFeatures) {
     this.features = f;
   }
 
+  private stopped = false;
+
   async start() {
+    this.stopped = false;
     this.setStatus({ state: "loading" });
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -157,6 +203,11 @@ export class FocusCamera {
     } catch (e) {
       const denied = e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "SecurityError");
       this.setStatus({ state: denied ? "denied" : "error" });
+      return;
+    }
+    if (this.stopped) {
+      this.stream.getTracks().forEach((t) => t.stop()); // closed before the camera came on
+      this.stream = null;
       return;
     }
     this.video.srcObject = this.stream;
@@ -175,6 +226,7 @@ export class FocusCamera {
   }
 
   stop() {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.stream?.getTracks().forEach((t) => t.stop());
@@ -216,7 +268,15 @@ export class FocusCamera {
     const lm = pose.landmarks[0];
     let present = false;
     let shoulders: { w: number; y: number } | null = null;
+    const points: CamDebug["points"] = [];
+    const wrists: { x: number; y: number }[] = [];
     if (lm) {
+      const parts: [number, CamDebug["points"][number]["part"]][] = [[0, "head"], [2, "head"], [5, "head"], [7, "head"], [8, "head"], [11, "shoulder"], [12, "shoulder"], [15, "wrist"], [16, "wrist"]];
+      for (const [i, part] of parts) {
+        const p = lm[i];
+        if (p && (p.visibility ?? 0) > 0.5) points.push({ x: p.x, y: p.y, part });
+        if (p && part === "wrist" && (p.visibility ?? 0) > 0.3) wrists.push({ x: p.x, y: p.y });
+      }
       const vis = (i: number) => (lm[i]?.visibility ?? 0) > 0.5;
       const ls = lm[11], rs = lm[12];
       const headSeen = [0, 2, 5, 7, 8].some(vis);
@@ -229,9 +289,13 @@ export class FocusCamera {
     let faceVisible = false;
     let eyesClosed = false;
     let jawOpen = 0;
+    let faceBox: CamDebug["face"] = null;
     const face = this.models.face.detectForVideo(v, ts);
     if (face.faceLandmarks.length) {
       present = true;
+      const fl = face.faceLandmarks[0];
+      const xs = fl.map((p) => p.x), ys = fl.map((p) => p.y);
+      faceBox = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
       const m = face.facialTransformationMatrixes?.[0]?.data;
       // Head pitch from the transform matrix; looking down at an iPad tilts it a lot.
       // Column-major 4x4: pitch is the rotation about x, atan2(r21, r22).
@@ -244,12 +308,34 @@ export class FocusCamera {
     }
 
     // ---- phone, checked every 1.5 s
-    let phone = false;
     if (this.tickN % 3 === 0) {
       const det = this.models.objects.detectForVideo(v, ts);
-      phone = det.detections.some((d) => d.categories.some((c) => c.categoryName === "cell phone" && c.score > 0.4));
-      this.phoneHits = phone ? this.phoneHits + 1 : 0;
+      const W = v.videoWidth, H = v.videoHeight;
+      const pg = this.probe.getContext("2d", { willReadFrequently: true });
+      pg?.drawImage(v, 0, 0, 160, 120);
+      const objects: DebugObject[] = det.detections.map((d) => {
+        const c = d.categories[0];
+        const b = d.boundingBox!;
+        const box = { x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H };
+        return { ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, wrists, pg) };
+      });
+      this.debug.objects = objects;
+      this.phoneHits = objects.some((o) => o.verdict === "phone") ? this.phoneHits + 1 : 0;
     }
+
+    const yawning = jawOpen > 0.55;
+    this.debug = {
+      ...this.debug,
+      points,
+      face: faceBox,
+      present,
+      faceVisible,
+      eyesClosed,
+      yawning,
+      lookingDown: !!faceBox && !faceVisible,
+      phoneHits: this.phoneHits,
+      posture: !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
+    };
 
     if (present !== this.status.present || faceVisible !== this.status.faceVisible) this.setStatus({ present, faceVisible });
 
@@ -279,7 +365,7 @@ export class FocusCamera {
       }
     } else {
       this.seenSince = 0;
-      if (!this.isAway && now - this.lastSeen >= AWAY_MS) {
+      if (!this.isAway && now - this.lastSeen >= this.k.away) {
         this.isAway = true;
         this.counts.away++;
         if (this.features.away) this.onEvent("away");
@@ -287,7 +373,7 @@ export class FocusCamera {
     }
 
     // phone
-    if (this.phoneHits >= PHONE_HITS && now - this.lastPhoneNudge > PHONE_COOLDOWN) {
+    if (this.phoneHits >= PHONE_HITS && now - this.lastPhoneNudge > this.k.phoneCool) {
       this.lastPhoneNudge = now;
       this.phoneHits = 0;
       this.counts.phone++;
@@ -301,7 +387,7 @@ export class FocusCamera {
       if (!this.base && this.calibStart) {
         this.calib.w.push(shoulders.w);
         this.calib.y.push(shoulders.y);
-        if (now - this.calibStart >= CALIBRATE_MS && this.calib.w.length >= 20) {
+        if (now - this.calibStart >= this.k.calibrate && this.calib.w.length >= 15) {
           const med = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
           this.base = { w: med(this.calib.w), y: med(this.calib.y) };
           this.onEvent("calibrated");
@@ -310,7 +396,7 @@ export class FocusCamera {
         const slouched = shoulders.w > this.base.w * 1.18 || shoulders.y > this.base.y + 0.08;
         if (slouched) {
           if (!this.slouchSince) this.slouchSince = now;
-          if (now - this.slouchSince >= POSTURE_HOLD && now - this.lastPosture > POSTURE_COOLDOWN) {
+          if (now - this.slouchSince >= this.k.postureHold && now - this.lastPosture > this.k.postureCool) {
             this.lastPosture = now;
             this.slouchSince = 0;
             this.counts.posture++;
@@ -340,7 +426,7 @@ export class FocusCamera {
       drowsy = true;
       this.yawns = [];
     }
-    if (drowsy && now - this.lastDrowsy > DROWSY_COOLDOWN) {
+    if (drowsy && now - this.lastDrowsy > this.k.drowsyCool) {
       this.lastDrowsy = now;
       this.counts.drowsy++;
       if (this.features.drowsy) this.onEvent("drowsy");
@@ -355,6 +441,30 @@ export class FocusCamera {
     }
     this.minute.n++;
     this.minute.good += good;
+  }
+
+  /** Is this detection really a phone in your hand, or your calculator or iPad? */
+  private judgePhone(
+    label: string,
+    score: number,
+    box: { x: number; y: number; w: number; h: number },
+    wrists: { x: number; y: number }[],
+    g: CanvasRenderingContext2D | null | undefined,
+  ): { verdict: DebugObject["verdict"]; why: string } {
+    if (label !== "cell phone") return { verdict: "ignored", why: label === "remote" ? "looks like a calculator" : label === "laptop" || label === "tv" ? "looks like your iPad" : label };
+    if (score < 0.4) return { verdict: "ignored", why: "not sure enough" };
+    if (box.w * box.h > MAX_PHONE_AREA) return { verdict: "ignored", why: "too big, probably your iPad" };
+    if (g) {
+      const px = g.getImageData(Math.max(0, box.x * 160), Math.max(0, box.y * 120), Math.max(1, box.w * 160), Math.max(1, box.h * 120)).data;
+      let sum = 0;
+      for (let i = 0; i < px.length; i += 4) sum += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+      const luma = sum / (px.length / 4) / 255;
+      if (luma > MAX_PHONE_LUMA) return { verdict: "ignored", why: "too light, probably your calculator" };
+    }
+    const inHand = wrists.some((w) => w.x > box.x - HAND_REACH && w.x < box.x + box.w + HAND_REACH && w.y > box.y - HAND_REACH && w.y < box.y + box.h + HAND_REACH);
+    if (inHand) return { verdict: "phone", why: "phone in your hand" };
+    if (!wrists.length && score > 0.6) return { verdict: "phone", why: "phone (hands out of view)" };
+    return { verdict: "ignored", why: "phone on the desk, not in hand" };
   }
 
   private flushMinute(force = false) {

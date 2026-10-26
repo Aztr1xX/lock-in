@@ -4,6 +4,8 @@ import { dayKey, fmtDur, MIN } from "../lib/timer";
 import { minutesByDay, plantStage, startOfWeek, streak, STREAK_MIN, subjectMinutes, totalHours } from "../lib/stats";
 import { subjectHue } from "../lib/content";
 import Plant from "./Plant";
+import Flower from "./Flower";
+import { FLOWERS, flowersAt, nextFlower } from "../lib/flowers";
 import Timelapse from "./Timelapse";
 import { BADGES, earned } from "../lib/badges";
 import { IconBack, IconTrash } from "./Icons";
@@ -186,13 +188,34 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
 
             <section className="panel plant-panel">
               <h2>Your plant</h2>
-              <Plant stage={stage} size={120} />
+              <Plant stage={stage} hours={hours} size={120} />
               <p>
                 <b>Stage {stage} of 12.</b>{" "}
-                {stage >= 12 ? "Fully grown. Legend." : `Grows a stage for every hour you focus. ${Math.ceil((stage + 1 - hours) * 60)} min to the next one.`}
+                {stage >= 12
+                  ? (() => {
+                      const n = nextFlower(hours);
+                      return n ? `Fully grown. ${Math.ceil(n.hours - hours)} h until it grows a ${n.name.toLowerCase()}.` : "Every flower collected. Legend.";
+                    })()
+                  : `Grows a stage for every hour you focus. ${Math.ceil((stage + 1 - hours) * 60)} min to the next one.`}
               </p>
             </section>
           </div>
+
+          <section className="panel">
+            <h2>Flowers <span className="muted small-count">{flowersAt(hours).length} of {FLOWERS.length}</span></h2>
+            <div className="flower-grid">
+              {FLOWERS.map((f) => {
+                const has = hours >= f.hours;
+                return (
+                  <div key={f.kind} className={`flower-tile ${has ? "" : "locked"}`} title={has ? f.line : `Unlocks at ${f.hours} hours`}>
+                    <Flower kind={f.kind} size={48} locked={!has} />
+                    <b>{has ? f.name : "???"}</b>
+                    <small>{has ? `${f.hours} h` : `${Math.max(1, Math.ceil(f.hours - hours))} h to go`}</small>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
 
           <section className="panel">
             <h2>Badges <span className="muted small-count">{got.size} of {BADGES.length}</span></h2>

@@ -11,6 +11,11 @@ export function focusMs(a: Active, now: number): number {
   return a.focusMsBanked + (a.phase === "focus" ? Math.min(phaseElapsed(a, now), a.phaseDurMs || Infinity) : 0);
 }
 
+/** Test runs use tiny timers so every part can be tried in a couple of minutes. */
+export function sessionSettings(s: Settings, a: Active | null): Settings {
+  return a?.test ? { ...s, focusMin: 1, shortMin: 0.5, longMin: 0.5, roundsBeforeLong: 2, lockInSec: 5 } : s;
+}
+
 export function phaseDuration(phase: Phase, s: Settings): number {
   if (phase === "focus") return s.focusMin * MIN;
   if (phase === "short") return s.shortMin * MIN;

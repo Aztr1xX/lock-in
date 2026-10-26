@@ -59,6 +59,7 @@ export interface Active {
   rounds: number; // completed focus rounds
   breakIdea: number;
   autoPaused?: boolean;
+  test?: boolean; // test run: short timers, nothing saved
 }
 
 export const defaultSettings: Settings = {
