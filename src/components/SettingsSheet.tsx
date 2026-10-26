@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Settings } from "../lib/store";
-import { uid } from "../lib/store";
+import { loadSessions, saveSessions, uid } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
 import { IconClose, IconTrash } from "./Icons";
 
@@ -23,6 +23,36 @@ function Stepper({ id, value, min, max, step, unit, onChange }: { id: string; va
 export default function SettingsSheet({ settings: s, update, onClose }: Props) {
   const [examName, setExamName] = useState("");
   const [examDate, setExamDate] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const backup = () => {
+    const data = { app: "lock-in", version: 1, exportedAt: new Date().toISOString(), settings: s, sessions: loadSessions() };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lock-in-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setMsg("Backup saved to your Downloads folder.");
+  };
+
+  const restore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.app !== "lock-in" || !Array.isArray(data.sessions)) throw new Error();
+      const mine = loadSessions();
+      const ids = new Set(mine.map((x) => x.id));
+      const merged = [...mine, ...data.sessions.filter((x: { id: string }) => !ids.has(x.id))];
+      saveSessions(merged);
+      update({ ...data.settings });
+      setMsg(`Restored ${merged.length - mine.length} sessions. Reloading…`);
+      setTimeout(() => location.reload(), 900);
+    } catch {
+      setMsg("That file isn't a Lock In backup.");
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -148,6 +178,19 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
             <span>Sounds<small>A soft chime when breaks start and end.</small></span>
             <input id="sound-toggle" type="checkbox" className="toggle" checked={s.sound} onChange={(e) => update({ sound: e.target.checked })} />
           </label>
+        </section>
+
+        <section className="set-group">
+          <h3>Your data</h3>
+          <p className="hint">Back up your sessions and settings to a file, or bring them back on another PC. Time-lapses stay on this PC.</p>
+          <div className="data-btns">
+            <button className="ghost-btn" onClick={backup}>Back up</button>
+            <label className="ghost-btn">
+              Restore
+              <input id="restore-file" type="file" accept="application/json,.json" hidden onChange={restore} />
+            </label>
+          </div>
+          {msg && <p className="hint">{msg}</p>}
         </section>
 
         <p className="privacy">Everything you do here is saved in this browser on this PC. Nothing is uploaded.</p>

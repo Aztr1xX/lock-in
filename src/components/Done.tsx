@@ -6,6 +6,7 @@ import { confetti } from "../lib/fx";
 import Plant from "./Plant";
 import FocusStrip from "./FocusStrip";
 import Timelapse from "./Timelapse";
+import { BADGES, earned } from "../lib/badges";
 
 interface Props {
   session: Session;
@@ -37,11 +38,15 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
   const st = streak(sessions);
   const stBefore = streak(prevSessions);
   const streakUp = saved && st.days > stBefore.days;
+  const had = earned(prevSessions, settings);
+  const now = earned(sessions, settings);
+  const newBadges = BADGES.filter((b) => now.has(b.id) && !had.has(b.id));
 
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    if (hitGoal || grew || streakUp) setTimeout(() => confetti({ x: innerWidth / 2, y: innerHeight * 0.3 }), 350);
+    if (hitGoal || grew || streakUp || newBadges.length) setTimeout(() => confetti({ x: innerWidth / 2, y: innerHeight * 0.3 }), 350);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitGoal, grew, streakUp]);
 
   useEffect(() => {
@@ -99,6 +104,17 @@ export default function Done({ session, saved, prevSessions, sessions, settings,
             {streakUp && <li>Streak is now {st.days} {st.days === 1 ? "day" : "days"}</li>}
             {grew && <li>Your plant reached stage {afterStage}</li>}
           </ul>
+        )}
+
+        {newBadges.length > 0 && (
+          <div className="new-badges">
+            {newBadges.map((b, i) => (
+              <div className="badge new" key={b.id} style={{ animationDelay: `${0.4 + i * 0.15}s` }}>
+                <span className="badge-icon">{b.icon}</span>
+                <span><small>Badge unlocked</small><b>{b.name}</b></span>
+              </div>
+            ))}
+          </div>
         )}
 
         {saved && (

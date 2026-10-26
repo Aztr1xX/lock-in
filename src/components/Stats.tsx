@@ -5,6 +5,7 @@ import { minutesByDay, plantStage, startOfWeek, streak, STREAK_MIN, subjectMinut
 import { subjectHue } from "../lib/content";
 import Plant from "./Plant";
 import Timelapse from "./Timelapse";
+import { BADGES, earned } from "../lib/badges";
 import { IconBack, IconTrash } from "./Icons";
 
 interface Props {
@@ -80,6 +81,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
     const hi = hours.length ? Math.min(23, Math.max(...hours) + 1) : 22;
     return { cells, used, best, lo, hi };
   }, [sessions]);
+  const got = earned(sessions, settings);
   const withLapse = [...sessions].filter((x) => x.frames).sort((a, b) => b.start - a.start).slice(0, 9);
 
   const level = (m: number) => (m <= 0 ? 0 : m < STREAK_MIN ? 1 : m < settings.dailyGoalMin / 2 ? 2 : m < settings.dailyGoalMin ? 3 : 4);
@@ -191,6 +193,18 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
               </p>
             </section>
           </div>
+
+          <section className="panel">
+            <h2>Badges <span className="muted small-count">{got.size} of {BADGES.length}</span></h2>
+            <div className="badge-grid">
+              {BADGES.map((b) => (
+                <div key={b.id} className={`badge ${got.has(b.id) ? "" : "locked"}`} title={b.how}>
+                  <span className="badge-icon">{got.has(b.id) ? b.icon : "🔒"}</span>
+                  <span><b>{b.name}</b><small>{b.how}</small></span>
+                </div>
+              ))}
+            </div>
+          </section>
 
           {heat.used && (
             <section className="panel">
