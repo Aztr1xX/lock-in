@@ -1,14 +1,21 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { Settings } from "../lib/store";
 import { loadSessions, saveSessions, uid } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
 import { listCameras } from "../lib/camera";
 import { IconClose, IconTrash } from "./Icons";
+import type { BackupMeta } from "../lib/bridge";
+
+const AWAY_CHOICES = [5, 10, 20, 30, 60, 120];
+const fmtSec = (sec: number) => (sec < 60 ? `${sec} s` : `${sec / 60} min`);
 
 interface Props {
   settings: Settings;
   update: (p: Partial<Settings>) => void;
   onClose: () => void;
+  /** The blocker's copy of your history: "none" without the blocker, "old" if it needs updating. */
+  autoBackup: "none" | "old" | BackupMeta | null;
+  onSetup: () => void;
 }
 
 function Stepper({ id, value, min, max, step, unit, onChange }: { id: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void }) {
@@ -21,7 +28,7 @@ function Stepper({ id, value, min, max, step, unit, onChange }: { id: string; va
   );
 }
 
-export default function SettingsSheet({ settings: s, update, onClose }: Props) {
+export default function SettingsSheet({ settings: s, update, onClose, autoBackup, onSetup }: Props) {
   const [examName, setExamName] = useState("");
   const [examDate, setExamDate] = useState("");
   const [msg, setMsg] = useState("");
@@ -146,15 +153,27 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
             <div className="cam-opts">
               {([
                 ["timelapse", "Time-lapse", "A photo every 10 seconds, played back as a short video"],
-                ["away", "Pause when I leave", "Stops the timer if you're gone for 10 seconds, restarts when you're back"],
+                ["away", "Pause when I leave", `Stops the timer once you've been out of view for ${fmtSec(s.awaySec)}, and starts it again when you're back`],
                 ["phone", "Phone nudge", "A gentle nudge if you pick up your phone"],
                 ["posture", "Posture reminder", "Only after a few minutes of hunching. Looking down at your iPad is fine"],
                 ["drowsy", "Tired alert", "Suggests a break if you keep yawning or your eyes keep closing"],
               ] as const).map(([k, title, sub]) => (
-                <label className="toggle-row" key={k}>
-                  <span>{title}<small>{sub}</small></span>
-                  <input id={`cam-${k}`} type="checkbox" className="toggle" checked={s.cam[k]} onChange={(e) => update({ cam: { ...s.cam, [k]: e.target.checked } })} />
-                </label>
+                <Fragment key={k}>
+                  <label className="toggle-row">
+                    <span>{title}<small>{sub}</small></span>
+                    <input id={`cam-${k}`} type="checkbox" className="toggle" checked={s.cam[k]} onChange={(e) => update({ cam: { ...s.cam, [k]: e.target.checked } })} />
+                  </label>
+                  {k === "away" && s.cam.away && (
+                    <div className="away-pick" role="radiogroup" aria-label="Pause after">
+                      <span>Pause after</span>
+                      {AWAY_CHOICES.map((sec) => (
+                        <button key={sec} id={`away-${sec}`} role="radio" aria-checked={s.awaySec === sec} className={`chip ${s.awaySec === sec ? "on" : ""}`} onClick={() => update({ awaySec: sec })}>
+                          {fmtSec(sec)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Fragment>
               ))}
             </div>
           )}
@@ -199,7 +218,19 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
 
         <section className="set-group">
           <h3>Your data</h3>
-          <p className="hint">Back up your sessions and settings to a file, or bring them back on another PC. Time-lapses stay on this PC.</p>
+          <div className={`setup-status ${autoBackup && typeof autoBackup === "object" ? "on" : ""}`} id="auto-backup">
+            <span className="helper-dot" />
+            {autoBackup === "none" ? (
+              <span><b>No automatic backup.</b> Clearing Chrome's browsing data would wipe your plant and streak. <button className="link-btn inline" onClick={onSetup}>Set up the blocker</button> and it keeps a copy for you.</span>
+            ) : autoBackup === "old" ? (
+              <span><b>Update the blocker to back up automatically.</b> Download it again from <button className="link-btn inline" onClick={onSetup}>Blocking</button>, unzip it over the old folder, then press Reload on it in <code>chrome://extensions</code>.</span>
+            ) : autoBackup ? (
+              <span><b>Backed up automatically.</b> The blocker keeps a copy of all {autoBackup.count} sessions, last saved {new Date(autoBackup.savedAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}. Clearing Chrome's site data won't touch it.</span>
+            ) : (
+              <span><b>Starting your first backup…</b> The blocker keeps a copy of your sessions from now on.</span>
+            )}
+          </div>
+          <p className="hint">You can also save a backup file, for another PC or for safekeeping. Time-lapses stay on this PC.</p>
           <div className="data-btns">
             <button className="ghost-btn" onClick={backup}>Back up</button>
             <label className="ghost-btn">

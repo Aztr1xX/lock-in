@@ -10,7 +10,7 @@ import { addFrame, deleteFrames } from "./lib/timelapse";
 import Toast, { type ToastData } from "./components/Toast";
 import { breakIdeas } from "./lib/content";
 import { chime, primeAudio, setFavicon, swapScreen } from "./lib/fx";
-import { type Helpers, onExtension, pingExtension, sendSession } from "./lib/bridge";
+import { type Helpers, fetchBackup, onExtension, pingExtension, sendBackup, sendSession } from "./lib/bridge";
 import SetupSheet from "./components/SetupSheet";
 import Home from "./components/Home";
 import Focus from "./components/Focus";
@@ -50,6 +50,35 @@ export default function App() {
     return () => { off(); clearInterval(id); };
   }, []);
 
+  // The blocker keeps a copy of your history, refreshed whenever it changes. If this browser
+  // turns up with far less than that copy (site data cleared), Home offers to bring it back.
+  const [restoreDismissed, setRestoreDismissed] = useState(false);
+  const kept = helpers.blocker ? helpers.backup : undefined;
+  const restoreOffer = !!kept && kept.count > 0 && (sessions.length === 0 || kept.count > sessions.length + 5) && !restoreDismissed;
+  const canBackup = kept !== undefined && !restoreOffer && !(kept && kept.count > 0 && sessions.length === 0);
+  useEffect(() => {
+    if (!canBackup) return;
+    const id = setTimeout(() => sendBackup(sessions, settings), 1500);
+    return () => clearTimeout(id);
+  }, [canBackup, sessions, settings]);
+
+  const restoreFromBlocker = useCallback(async () => {
+    const data = await fetchBackup();
+    if (!data?.sessions?.length) {
+      showToast({ icon: "🤔", text: "Couldn't read the copy from the blocker. Try again in a moment." });
+      return;
+    }
+    const mine = loadSessions();
+    const ids = new Set(mine.map((x) => x.id));
+    const merged = [...mine, ...data.sessions.filter((x) => !ids.has(x.id))].sort((a, b) => a.start - b.start);
+    saveSessions(merged);
+    setSessions(merged);
+    // A wiped browser lost its settings too, so those come back as well.
+    if (!mine.length && data.settings) updateSettings({ ...data.settings });
+    setRestoreDismissed(true);
+    showToast({ icon: "🌱", text: `Brought back ${merged.length - mine.length} sessions. Your plant is home.` });
+  }, [showToast]);
+
   // Keep the blocker in step with the session: on at Start, renewed every minute, off at End.
   const activeId = active?.id;
   const activeSubject = active?.subject;
@@ -77,6 +106,7 @@ export default function App() {
     );
     camRef.current = cam;
     cam.setQuick(activeTest);
+    cam.setAwayMs(settings.awaySec * 1000);
     void cam.setCamera(settings.cameraId);
     void cam.start();
     return () => {
@@ -88,6 +118,7 @@ export default function App() {
   }, [activeId, camOn]);
 
   useEffect(() => camRef.current?.setFeatures(settings.cam), [settings.cam]);
+  useEffect(() => camRef.current?.setAwayMs(settings.awaySec * 1000), [settings.awaySec]);
   useEffect(() => void camRef.current?.setCamera(settings.cameraId), [settings.cameraId]);
 
   // Detection counts during focus only. While auto-paused it keeps watching for you to come back.
@@ -370,6 +401,8 @@ export default function App() {
         onCamCheck={() => setCamCheck(true)}
         helpers={helpers}
         updateSettings={updateSettings}
+        onToast={showToast}
+        restore={restoreOffer && kept ? { count: kept.count, savedAt: kept.savedAt, onRestore: () => void restoreFromBlocker(), onDismiss: () => setRestoreDismissed(true) } : null}
       />
     );
   }
@@ -377,7 +410,7 @@ export default function App() {
   return (
     <>
       {screen}
-      {settingsOpen && <SettingsSheet settings={settings} update={updateSettings} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet settings={settings} update={updateSettings} onClose={() => setSettingsOpen(false)} autoBackup={!helpers.blocker ? "none" : kept === undefined ? "old" : kept} onSetup={() => { setSettingsOpen(false); setSetupOpen(true); }} />}
       <Toast toast={toast} onDone={() => setToast(null)} />
       {camCheck && (
         <CamCheck

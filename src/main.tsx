@@ -9,6 +9,9 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
+// Ask Chrome not to clear this site's storage on its own when the disk gets full.
+void navigator.storage?.persist?.().catch(() => {});
+
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 }
