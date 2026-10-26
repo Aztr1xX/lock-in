@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ToastData {
   id: number;
@@ -12,14 +12,18 @@ const LIFE = 5_000;
 /** One gentle message at the top of the screen. Fades out by itself. */
 export default function Toast({ toast, onDone }: { toast: ToastData | null; onDone: () => void }) {
   const [leaving, setLeaving] = useState(false);
+  // The parent re-renders several times a second during a session, so keep the latest
+  // onDone in a ref; otherwise every render would restart the 5 second timer.
+  const done = useRef(onDone);
+  done.current = onDone;
   useEffect(() => {
     if (!toast) return;
     setLeaving(false);
     const life = LIFE;
     const a = setTimeout(() => setLeaving(true), life);
-    const b = setTimeout(onDone, life + 400);
+    const b = setTimeout(() => done.current(), life + 400);
     return () => { clearTimeout(a); clearTimeout(b); };
-  }, [toast, onDone]);
+  }, [toast]);
   if (!toast) return null;
   return (
     <div className={`toast ${leaving ? "leaving" : ""}`} role="status" key={toast.id}>

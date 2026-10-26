@@ -198,7 +198,48 @@ function LockInGate({ seconds, focused, onStay, onEnd }: { seconds: number; focu
 
 function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamStatus; cam: FocusCamera | null; showSelf: boolean; onOpen: () => void; onToggle: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const on = status.state === "on" && !!cam;
+  // Drag it anywhere; it remembers where you left it. A press without a drag opens the full view.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() => {
+    try { return JSON.parse(localStorage.getItem("lockin.pip") || "null"); } catch { return null; }
+  });
+  const drag = useRef<{ dx: number; dy: number; sx: number; sy: number; moved: boolean } | null>(null);
+  const clamp = (x: number, y: number) => {
+    const el = box.current;
+    const w = el?.offsetWidth ?? 200, h = el?.offsetHeight ?? 150;
+    return { x: Math.max(8, Math.min(innerWidth - w - 8, x)), y: Math.max(8, Math.min(innerHeight - h - 8, y)) };
+  };
+  useEffect(() => {
+    const fit = () => setPos((p) => (p ? clamp(p.x, p.y) : p));
+    addEventListener("resize", fit);
+    return () => removeEventListener("resize", fit);
+  }, []);
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest(".cam-pip-hide")) return;
+    const r = box.current!.getBoundingClientRect();
+    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
+    box.current!.setPointerCapture(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 5) return;
+    d.moved = true;
+    box.current!.classList.add("dragging");
+    setPos(clamp(e.clientX - d.dx, e.clientY - d.dy));
+  };
+  const onUp = () => {
+    const d = drag.current;
+    drag.current = null;
+    box.current?.classList.remove("dragging");
+    if (!d) return;
+    if (!d.moved) return onOpen();
+    setPos((p) => {
+      try { localStorage.setItem("lockin.pip", JSON.stringify(p)); } catch { /* fine */ }
+      return p;
+    });
+  };
   useEffect(() => {
     if (!on || !showSelf || !cam) return;
     let raf = 0, last = 0;
@@ -230,10 +271,25 @@ function CamBubble({ status, cam, showSelf, onOpen, onToggle }: { status: CamSta
     );
   }
   return (
-    <div className={`cam-pip ${tone}`}>
-      <button className="cam-pip-view" onClick={onOpen} title="Open the full camera check" aria-label="Open the full camera check">
+    <div
+      ref={box}
+      className={`cam-pip ${tone}`}
+      style={pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : undefined}
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerCancel={onUp}
+    >
+      <div
+        className="cam-pip-view"
+        role="button"
+        tabIndex={0}
+        title="Drag to move. Click for the full camera check."
+        aria-label="Camera preview. Drag to move, click for the full camera check."
+        onKeyDown={(e) => e.key === "Enter" && onOpen()}
+      >
         <canvas ref={canvas} width={320} height={240} />
-      </button>
+      </div>
       <span className="cam-pip-status"><i />{label}</span>
       <button className="cam-pip-hide" onClick={onToggle} aria-label="Hide the camera preview" title="Hide">–</button>
     </div>

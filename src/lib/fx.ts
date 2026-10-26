@@ -247,3 +247,16 @@ export function confetti(origin?: { x: number; y: number }) {
   };
   requestAnimationFrame(frame);
 }
+
+/**
+ * Swaps screens with a soft crossfade (Chrome's View Transitions). The state change
+ * runs inside the transition; the promise gives Preact a tick to paint the new screen.
+ */
+export function swapScreen(change: () => void) {
+  const d = document as Document & { startViewTransition?: (cb: () => Promise<void>) => unknown };
+  if (!d.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return change();
+  d.startViewTransition(() => {
+    change();
+    return new Promise((r) => setTimeout(r, 0));
+  });
+}

@@ -5,7 +5,9 @@
 // Built so looking down at an iPad still counts as "at your desk": presence comes
 // from head-and-shoulders pose, not from seeing your face.
 
-import type { FaceLandmarker, ObjectDetector, PoseLandmarker } from "@mediapipe/tasks-vision";
+import type { FaceLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { type Crop, type Detectors, type RawObject, detectObjects, makeDetectors } from "./objects";
+import ObjectsWorker from "./objects.worker?worker";
 
 export type CamEvent = "away" | "back" | "phone" | "posture" | "drowsy" | "calibrated";
 
@@ -53,9 +55,6 @@ export interface TracePoint {
 interface Models {
   pose: PoseLandmarker;
   face: FaceLandmarker;
-  objects: ObjectDetector;
-  /** Second detector for close-up crops around your hands, where a phone is big enough to spot. */
-  hands: ObjectDetector;
 }
 
 let modelsPromise: Promise<Models> | null = null;
@@ -71,7 +70,7 @@ function loadModels(): Promise<Models> {
         return await fn("CPU");
       }
     };
-    const [pose, face, objects, hands] = await Promise.all([
+    const [pose, face] = await Promise.all([
       make((delegate) =>
         mp.PoseLandmarker.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: "/mediapipe/pose_landmarker_lite.task", delegate },
@@ -88,34 +87,83 @@ function loadModels(): Promise<Models> {
           outputFacialTransformationMatrixes: true,
         }),
       ),
-      make((delegate) =>
-        mp.ObjectDetector.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: "/mediapipe/efficientdet_lite0.tflite", delegate },
-          runningMode: "VIDEO",
-          scoreThreshold: 0.25,
-          // "person" is the most reliable "are you at your desk" signal. The rest get
-          // mistaken for phones, so they're looked for too and ruled out.
-          categoryAllowlist: ["person", "cell phone", "remote", "laptop", "tv", "book", "keyboard"],
-          maxResults: 8,
-        }),
-      ),
-      make((delegate) =>
-        mp.ObjectDetector.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: "/mediapipe/efficientdet_lite0.tflite", delegate },
-          runningMode: "IMAGE",
-          scoreThreshold: 0.25,
-          categoryAllowlist: ["cell phone", "remote"],
-          maxResults: 3,
-        }),
-      ),
     ]);
-    return { pose, face, objects, hands };
+    return { pose, face };
   })();
   modelsPromise.catch(() => (modelsPromise = null));
   return modelsPromise;
 }
 
-const AWAY_MS = 30_000;
+/**
+ * Finds people and phones in a background worker so it never holds up the timer or
+ * animations. Falls back to running here if workers aren't available. One for the app.
+ */
+class ObjectFinder {
+  private worker: Worker | null = null;
+  private local: Detectors | null = null;
+  private ready: Promise<void> | null = null;
+  private waiting = new Map<number, (o: RawObject[] | null) => void>();
+  private n = 0;
+  busy = false;
+  private probe = document.createElement("canvas");
+  private zoom = document.createElement("canvas");
+
+  init(): Promise<void> {
+    this.ready ??= this.startWorker().catch(async () => {
+      this.worker?.terminate();
+      this.worker = null;
+      this.probe.width = 160; this.probe.height = 120;
+      this.zoom.width = this.zoom.height = 320;
+      this.local = await makeDetectors("/mediapipe");
+    });
+    this.ready.catch(() => (this.ready = null));
+    return this.ready;
+  }
+
+  private startWorker(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") return reject(new Error("no offscreen"));
+      const w = new ObjectsWorker();
+      this.worker = w;
+      const t = setTimeout(() => reject(new Error("worker timeout")), 45_000);
+      w.onerror = () => { clearTimeout(t); reject(new Error("worker failed")); };
+      w.onmessage = (e) => {
+        const m = e.data as { id: number; ready?: boolean; objects?: RawObject[]; error?: string };
+        if (m.ready) { clearTimeout(t); resolve(); return; }
+        if (m.error && m.id === 0) { clearTimeout(t); reject(new Error(m.error)); return; }
+        const done = this.waiting.get(m.id);
+        this.waiting.delete(m.id);
+        done?.(m.objects ?? null);
+      };
+      w.postMessage({ id: 0, base: "/mediapipe" });
+    });
+  }
+
+  async find(v: HTMLVideoElement, crops: Crop[]): Promise<RawObject[] | null> {
+    if (this.busy) return null;
+    this.busy = true;
+    try {
+      if (this.local) return detectObjects(this.local, v, v.videoWidth, v.videoHeight, crops, this.probe, this.zoom);
+      if (!this.worker) return null;
+      const frame = await createImageBitmap(v);
+      const id = ++this.n;
+      return await new Promise<RawObject[] | null>((res) => {
+        this.waiting.set(id, res);
+        setTimeout(() => { if (this.waiting.delete(id)) res(null); }, 5_000);
+        this.worker!.postMessage({ id, frame, crops }, [frame]);
+      });
+    } catch {
+      return null;
+    } finally {
+      this.busy = false;
+    }
+  }
+}
+
+let finder: ObjectFinder | null = null;
+const getFinder = () => (finder ??= new ObjectFinder());
+
+const AWAY_MS = 10_000;
 const PERSON_SCORE = 0.45;
 const PERSON_KEEP = 3_000; // a person sighting counts as "here" for this long
 const BACK_MS = 2_000;
@@ -137,7 +185,7 @@ const HAND_REACH = 0.16; // a wrist this close to the box (of frame width) means
 const FRAME_MS = 10_000;
 const NORMAL = { away: AWAY_MS, calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
 // Test runs: everything fires fast so you can try it in a minute.
-const QUICK = { away: 10_000, calibrate: 10_000, postureHold: 15_000, postureCool: 30_000, phoneCool: 20_000, drowsyCool: 30_000 };
+const QUICK = { away: 5_000, calibrate: 10_000, postureHold: 15_000, postureCool: 30_000, phoneCool: 20_000, drowsyCool: 30_000 };
 
 export class FocusCamera {
   video: HTMLVideoElement;
@@ -158,7 +206,6 @@ export class FocusCamera {
   private phoneHits = 0;
   private phoneLog: boolean[] = [];
   private personAt = 0;
-  private crop = document.createElement("canvas");
   private lastPhoneNudge = 0;
   // posture
   private calib: { w: number[]; y: number[] } = { w: [], y: [] };
@@ -178,7 +225,6 @@ export class FocusCamera {
   // time-lapse
   private lastFrame = 0;
   private snap = document.createElement("canvas");
-  private probe = document.createElement("canvas");
   debug: CamDebug = {
     points: [], face: null, objects: [], present: false, faceVisible: false,
     eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, posture: "unknown",
@@ -195,9 +241,6 @@ export class FocusCamera {
     this.video.playsInline = true;
     this.snap.width = 320;
     this.snap.height = 240;
-    this.probe.width = 160;
-    this.probe.height = 120;
-    this.crop.width = this.crop.height = 320;
   }
 
   private k = NORMAL;
@@ -232,7 +275,7 @@ export class FocusCamera {
     this.video.srcObject = this.stream;
     await this.video.play().catch(() => {});
     try {
-      this.models = await loadModels();
+      [this.models] = await Promise.all([loadModels(), getFinder().init()]);
     } catch {
       this.setStatus({ state: "error" });
       this.stop();
@@ -328,46 +371,18 @@ export class FocusCamera {
       jawOpen = get("jawOpen");
     }
 
-    // ---- person and phone, checked every second
-    if (this.tickN % 2 === 0) {
-      const det = this.models.objects.detectForVideo(v, ts);
-      const W = v.videoWidth, H = v.videoHeight;
-      const pg = this.probe.getContext("2d", { willReadFrequently: true });
-      pg?.drawImage(v, 0, 0, 160, 120);
-      const objects: DebugObject[] = [];
-      for (const d of det.detections) {
-        const c = d.categories[0];
-        const b = d.boundingBox!;
-        const box = { x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H };
-        if (c.categoryName === "person") {
-          if (c.score >= PERSON_SCORE) {
-            this.personAt = now;
-            objects.push({ ...box, label: "person", score: c.score, verdict: "you", why: "you" });
-          }
-          continue;
-        }
-        objects.push({ ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, wrists, pg) });
+    // ---- person and phone, checked about every second (in the background)
+    if (this.tickN % 2 === 0 && !getFinder().busy) {
+      const crops: Crop[] = [];
+      const side = 0.42 * Math.min(v.videoWidth, v.videoHeight);
+      for (const w of wrists) crops.push({ x: w.x, y: w.y - 0.1, side }); // hands reach a little past the wrist
+      // Phones held low in both hands sit just below the chest, often with the wrists out of view.
+      if (shoulders) {
+        const ls = lm![11], rs = lm![12];
+        crops.push({ x: (ls.x + rs.x) / 2, y: Math.min(0.85, shoulders.y + 0.32), side: 0.55 * Math.min(v.videoWidth, v.videoHeight) });
       }
-      // Close-ups around each hand: a phone is tiny in the full picture but easy to see up close.
-      if (!objects.some((o) => o.verdict === "phone")) {
-        for (const w of wrists) {
-          const side = 0.42 * Math.min(W, H);
-          const cx = w.x * W, cy = w.y * H - side * 0.15; // hands reach a little past the wrist
-          const sx = Math.max(0, Math.min(W - side, cx - side / 2)), sy = Math.max(0, Math.min(H - side, cy - side / 2));
-          const cg = this.crop.getContext("2d");
-          if (!cg) break;
-          cg.drawImage(v, sx, sy, side, side, 0, 0, 320, 320);
-          for (const d of this.models.hands.detect(this.crop).detections) {
-            const c = d.categories[0];
-            const b = d.boundingBox!;
-            const box = { x: (sx + (b.originX / 320) * side) / W, y: (sy + (b.originY / 320) * side) / H, w: ((b.width / 320) * side) / W, h: ((b.height / 320) * side) / H };
-            objects.push({ ...box, label: c.categoryName, score: c.score, ...this.judgePhone(c.categoryName, c.score, box, [w], pg) });
-          }
-        }
-      }
-      this.debug.objects = objects;
-      this.phoneLog = [...this.phoneLog, objects.some((o) => o.verdict === "phone")].slice(-PHONE_WINDOW);
-      this.phoneHits = this.phoneLog.filter(Boolean).length;
+      const seenWrists = wrists;
+      void getFinder().find(v, crops.slice(0, 3)).then((objs) => objs && this.stream && this.onObjects(objs, seenWrists, Date.now()));
     }
     const personSeen = now - this.personAt < PERSON_KEEP;
     if (personSeen) present = true;
@@ -493,25 +508,41 @@ export class FocusCamera {
     this.minute.good += good;
   }
 
+  private onObjects(raw: RawObject[], wrists: { x: number; y: number }[], now: number) {
+    const objects: DebugObject[] = [];
+    for (const o of raw) {
+      const box = { x: o.x, y: o.y, w: o.w, h: o.h };
+      if (o.label === "person") {
+        if (o.score >= PERSON_SCORE) {
+          this.personAt = now;
+          objects.push({ ...box, label: "person", score: o.score, verdict: "you", why: "you" });
+        }
+        continue;
+      }
+      objects.push({ ...box, label: o.label, score: o.score, ...this.judgePhone(o.label, o.score, box, wrists, o.dark, o.crop) });
+    }
+    this.debug = { ...this.debug, objects };
+    this.phoneLog = [...this.phoneLog, objects.some((o) => o.verdict === "phone")].slice(-PHONE_WINDOW);
+    this.phoneHits = this.phoneLog.filter(Boolean).length;
+  }
+
   /** Is this detection really a phone in your hand, or your calculator or iPad? */
   private judgePhone(
     label: string,
     score: number,
     box: { x: number; y: number; w: number; h: number },
     wrists: { x: number; y: number }[],
-    g: CanvasRenderingContext2D | null | undefined,
+    dark: number,
+    fromCrop: boolean,
   ): { verdict: DebugObject["verdict"]; why: string } {
     if (label !== "cell phone") return { verdict: "ignored", why: label === "remote" ? "looks like a calculator" : label === "laptop" || label === "tv" ? "looks like your iPad" : label };
     if (score < 0.3) return { verdict: "ignored", why: "not sure enough" };
     if (box.w * box.h > MAX_PHONE_AREA) return { verdict: "ignored", why: "too big, probably your iPad" };
-    if (g) {
-      const px = g.getImageData(Math.max(0, box.x * 160), Math.max(0, box.y * 120), Math.max(1, box.w * 160), Math.max(1, box.h * 120)).data;
-      let dark = 0;
-      for (let i = 0; i < px.length; i += 4) if (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2] < 90) dark++;
-      if (dark / (px.length / 4) < MIN_DARK) return { verdict: "ignored", why: "too light, probably your calculator" };
-    }
+    if (dark < MIN_DARK) return { verdict: "ignored", why: "too light, probably your calculator" };
     const inHand = wrists.some((w) => w.x > box.x - HAND_REACH && w.x < box.x + box.w + HAND_REACH && w.y > box.y - HAND_REACH && w.y < box.y + box.h + HAND_REACH);
     if (inHand) return { verdict: "phone", why: "phone in your hand" };
+    // Found in the close-up of your hands or chest: that's where a phone you're using is.
+    if (fromCrop && score >= 0.35) return { verdict: "phone", why: "phone in your hands" };
     if (!wrists.length && score > 0.5) return { verdict: "phone", why: "phone (hands out of view)" };
     return { verdict: "ignored", why: "phone on the desk, not in hand" };
   }

@@ -59,11 +59,11 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
   const things = dbg?.objects.filter((o) => o.verdict !== "you") ?? [];
   const rows: [string, string, "ok" | "warn" | "off"][] = dbg && on
     ? [
-        ["You", dbg.present ? "At your desk" : "Not in view. After 30 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
+        ["You", dbg.present ? "At your desk" : "Not in view. After 10 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
         ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.posture === "hunched" ? "Hunched. Nudges after 3 minutes of this." : dbg.posture === "good" ? "Good" : "Needs your shoulders in view", dbg.posture === "hunched" ? "warn" : dbg.posture === "good" ? "ok" : "off"],
-        ["Phone", phones.length ? `${phones[0].why}. Nudges after 3 sightings in a row (${dbg.phoneHits}/3).` : "None in your hand", phones.length ? "warn" : "ok"],
+        ["Phone", phones.length ? `${phones[0].why[0].toUpperCase()}${phones[0].why.slice(1)}. Nudges after 3 sightings in 6 seconds (${Math.min(3, dbg.phoneHits)}/3).` : "None in your hand", phones.length ? "warn" : "ok"],
       ]
     : [];
 

@@ -21,7 +21,7 @@
   --r: 16px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --spring: cubic-bezier(0.34, 1.32, 0.64, 1);
-  --glass: color-mix(in srgb, var(--surface) 72%, transparent);
+  --glass: color-mix(in srgb, var(--surface) 86%, transparent);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -70,7 +70,7 @@ kbd {
 }
 
 .screen-enter { animation: enter 0.7s var(--ease) both; }
-@keyframes enter { from { opacity: 0; transform: translateY(12px) scale(0.985); filter: blur(4px); } }
+@keyframes enter { from { opacity: 0; transform: translateY(10px); } }
 
 /* ---------- shared bits ---------- */
 .topbar {
@@ -147,7 +147,6 @@ kbd {
   color: var(--accent-ink);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   box-shadow: 0 0 0 0 var(--accent-soft), 0 18px 50px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 -6px 18px rgba(0,0,0,0.15), inset 0 4px 12px rgba(255,255,255,0.25);
-  animation: breathe 3.6s ease-in-out infinite;
   transition: transform 0.35s var(--spring);
 }
 .start-btn:hover { transform: scale(1.03); }
@@ -158,7 +157,8 @@ kbd {
   0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft), 0 18px 50px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 -6px 18px rgba(0,0,0,0.15), inset 0 4px 12px rgba(255,255,255,0.25); }
   50% { box-shadow: 0 0 0 18px transparent, 0 18px 70px color-mix(in srgb, var(--accent) 45%, transparent), inset 0 -6px 18px rgba(0,0,0,0.15), inset 0 4px 12px rgba(255,255,255,0.25); }
 }
-.start-wrap.pressed .start-btn { animation: none; transform: scale(1.45); opacity: 0; filter: blur(6px); transition: transform 0.34s cubic-bezier(0.55, 0, 0.75, 0.2), opacity 0.3s ease-in, filter 0.3s ease-in; }
+.start-wrap.pressed .start-btn { transform: scale(1.35); opacity: 0; transition: transform 0.34s cubic-bezier(0.55, 0, 0.75, 0.2), opacity 0.3s ease-in; }
+.start-wrap.pressed .goal-ring::before { opacity: 0; animation: none; transition: opacity 0.2s; }
 .start-wrap.pressed .goal-ring svg { transform: scale(1.12); opacity: 0; transition: transform 0.34s cubic-bezier(0.55, 0, 0.75, 0.2), opacity 0.28s ease-in; }
 .home-grid:has(.start-wrap.pressed) > aside { opacity: 0; transform: scale(0.97); transition: opacity 0.3s ease-in, transform 0.3s ease-in; }
 .goal-caption { color: var(--muted); font-size: 0.95rem; font-variant-numeric: tabular-nums; }
@@ -308,7 +308,7 @@ kbd {
 /* lock-in gate */
 .gate {
   position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px;
-  background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
   animation: fade 0.25s both;
 }
 @keyframes fade { from { opacity: 0; } }
@@ -424,7 +424,7 @@ kbd {
 .empty p { color: var(--muted); max-width: 36ch; margin: 0 0 16px; }
 
 /* ---------- settings sheet ---------- */
-.sheet-backdrop { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, var(--bg) 60%, transparent); backdrop-filter: blur(4px); animation: fade 0.2s both; }
+.sheet-backdrop { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, var(--bg) 72%, transparent); animation: fade 0.25s ease-out both; }
 .sheet {
   position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 100%); overflow-y: auto;
   background: var(--bg-2); border-left: 1px solid var(--line); box-shadow: var(--shadow);
@@ -589,7 +589,7 @@ body::before {
     radial-gradient(40vmax 30vmax at 15% 20%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
     radial-gradient(35vmax 28vmax at 85% 15%, rgba(124, 196, 255, 0.09), transparent 70%),
     radial-gradient(45vmax 30vmax at 70% 95%, color-mix(in srgb, var(--break) 7%, transparent), transparent 70%);
-  animation: aurora 38s ease-in-out infinite alternate;
+  animation: aurora 38s ease-in-out infinite alternate; will-change: transform;
 }
 @keyframes aurora {
   0% { transform: translate3d(0, 0, 0) rotate(0deg); }
@@ -597,7 +597,7 @@ body::before {
   100% { transform: translate3d(-2vmax, 2vmax, 0) rotate(-3deg); }
 }
 body::after {
-  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.035;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 #root { position: relative; z-index: 1; }
@@ -609,7 +609,7 @@ body::after {
 
 .card {
   background: var(--glass); border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
-  border-radius: 24px; backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border-radius: 24px;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 50px rgba(0, 0, 0, 0.18);
 }
 @media (prefers-color-scheme: light) { .card { box-shadow: 0 1px 0 #fff inset, 0 16px 40px rgba(16, 32, 26, 0.07); } }
@@ -650,7 +650,7 @@ body::after {
   content: ""; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; translate: -50% 0; rotate: 45deg;
   background: var(--surface-2); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
-@keyframes speech-in { from { opacity: 0; transform: translateY(6px) scale(0.97); filter: blur(3px); } }
+@keyframes speech-in { from { opacity: 0; transform: translateY(6px); } }
 .garden-plant { border: 0; background: none; padding: 0; border-radius: 20px; transform-origin: 50% 90%; transition: transform 0.4s var(--spring); }
 .garden-plant:hover { transform: scale(1.03); }
 .garden-plant.poke-a .plant { animation: poke 0.6s var(--ease); }
@@ -765,7 +765,7 @@ body::after {
   max-width: min(640px, calc(100vw - 24px)); min-width: min(420px, calc(100vw - 24px));
   padding: 16px 14px 16px 20px; border-radius: 22px; gap: 14px; overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px);
+  background: var(--surface);
 }
 .toast-icon { font-size: 1.9rem; line-height: 1; }
 .toast-text { font-size: 1.08rem; font-weight: 700; line-height: 1.35; flex: 1; }
@@ -823,3 +823,23 @@ body::after {
 }
 .min-unit { font-size: 0.8rem; color: var(--muted); padding: 0 6px 0 3px; }
 .timer-note { color: var(--muted); font-size: 0.9rem; }
+
+/* ================= round 4: smoother motion ================= */
+/* The Start button's breathing glow is its own layer, so it animates on the GPU
+   instead of repainting a big shadow every frame. */
+.goal-ring::before {
+  content: ""; position: absolute; inset: 16%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 45%, transparent) 50%, transparent 71%);
+  animation: breathe-glow 3.6s ease-in-out infinite; will-change: transform, opacity;
+}
+@keyframes breathe-glow { 0%, 100% { transform: scale(1); opacity: 0.35; } 50% { transform: scale(1.16); opacity: 0.12; } }
+.focus-glow { will-change: transform; }
+.cam-pip { touch-action: none; user-select: none; cursor: grab; transition: border-color 0.4s, box-shadow 0.25s, transform 0.25s var(--ease); }
+.cam-pip-view { cursor: inherit; }
+.cam-pip.dragging { cursor: grabbing; transform: scale(1.03); box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45); transition: border-color 0.4s, box-shadow 0.25s, transform 0.25s var(--ease); }
+
+/* Screen changes: the old screen fades out over the new one as it slides in. */
+::view-transition-old(root) { animation: vt-out 0.3s cubic-bezier(0.4, 0, 1, 1) both; z-index: 1; }
+::view-transition-new(root) { animation: none; }
+@keyframes vt-out { to { opacity: 0; transform: scale(0.985); } }
+.focus > .focus-top { z-index: 5; }

@@ -8,7 +8,7 @@ import { type CamEvent, type CamStatus, FocusCamera } from "./lib/camera";
 import { addFrame, deleteFrames } from "./lib/timelapse";
 import Toast, { type ToastData } from "./components/Toast";
 import { breakIdeas } from "./lib/content";
-import { chime, primeAudio, setFavicon } from "./lib/fx";
+import { chime, primeAudio, setFavicon, swapScreen } from "./lib/fx";
 import { type Helpers, onExtension, pingExtension, sendSession } from "./lib/bridge";
 import SetupSheet from "./components/SetupSheet";
 import Home from "./components/Home";
@@ -171,8 +171,10 @@ export default function App() {
         : [...settings.subjects, a.subject];
       if (!test) updateSettings({ lastSubject: a.subject, subjects });
       if (settings.sound) chime.start();
-      setNow(t);
-      commitActive(a);
+      swapScreen(() => {
+        setNow(t);
+        commitActive(a);
+      });
     },
     [settings, updateSettings, commitActive],
   );
@@ -251,8 +253,10 @@ export default function App() {
     if (settings.sound) chime.done();
     sendSession(false);
     setToast(null);
-    commitActive(null);
-    setDone({ session, saved, test, prevSessions: prev });
+    swapScreen(() => {
+      commitActive(null);
+      setDone({ session, saved, test, prevSessions: prev });
+    });
   }, [active, sessions, settings.sound, commitActive]);
 
   const rate = useCallback((id: string, rating: number) => {
@@ -302,12 +306,12 @@ export default function App() {
         onClose={() => {
           // Test runs leave nothing behind, time-lapse included.
           if (done.test) void deleteFrames(done.session.id);
-          setDone(null);
+          swapScreen(() => setDone(null));
         }}
       />
     );
   } else if (view === "stats") {
-    screen = <Stats sessions={sessions} settings={settings} onBack={() => setView("home")} onDelete={deleteSession} />;
+    screen = <Stats sessions={sessions} settings={settings} onBack={() => swapScreen(() => setView("home"))} onDelete={deleteSession} />;
   } else {
     screen = (
       <Home
@@ -316,7 +320,7 @@ export default function App() {
         now={now}
         liveFocusMin={liveFocusMin}
         onStart={start}
-        onStats={() => setView("stats")}
+        onStats={() => swapScreen(() => setView("stats"))}
         onSettings={() => setSettingsOpen(true)}
         onSetup={() => setSetupOpen(true)}
         onTest={() => start(settings.lastSubject, "Test run", true)}
