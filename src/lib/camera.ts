@@ -168,10 +168,26 @@ class ObjectFinder {
 let finder: ObjectFinder | null = null;
 const getFinder = () => (finder ??= new ObjectFinder());
 
-const CAM_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 15 } };
+// Only "ideal" values: virtual cameras like NVIDIA Broadcast offer a few fixed modes,
+// and a hard limit they can't meet makes Chrome refuse them.
+const CAM_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } };
+const NVIDIA = /nvidia broadcast/i;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The camera to open, without opening anything to find out. Never the physical webcam
+ * when NVIDIA Broadcast is there: Broadcast needs that webcam for itself, and if this
+ * page grabs it, even for a moment, Broadcast falls back to its "no camera" picture.
+ */
+function chooseCamera(cams: MediaDeviceInfo[], picked: string): string {
+  if (picked && cams.some((c) => c.deviceId === picked)) return picked;
+  return cams.find((c) => NVIDIA.test(c.label))?.deviceId ?? picked;
+}
 
 /** Opens a camera, falling back to the default one if the chosen camera is gone. */
+let lastOpened = ""; // the device asked for, for cameras that don't report their id
 async function openCamera(id: string): Promise<MediaStream> {
+  lastOpened = id;
   if (id) {
     try {
       return await navigator.mediaDevices.getUserMedia({ video: { ...CAM_CONSTRAINTS, deviceId: { exact: id } }, audio: false });
@@ -307,34 +323,50 @@ export class FocusCamera {
     if (id === this.cameraId) return;
     this.cameraId = id;
     if (!this.stream) return;
+    // Let go of the old camera first. Holding the webcam while opening Broadcast is
+    // exactly what makes Broadcast lose its picture.
+    const was = this.currentCamera();
+    this.stream.getTracks().forEach((t) => t.stop());
+    this.stream = null;
+    this.video.srcObject = null;
+    await sleep(400);
+    if (this.stopped) return;
+    const cams = await listCameras();
+    let next: MediaStream;
     try {
-      const next = await openCamera(id);
-      this.stream.getTracks().forEach((t) => t.stop());
-      this.stream = next;
-      this.video.srcObject = next;
-      await this.video.play().catch(() => {});
+      next = await openCamera(chooseCamera(cams, id));
     } catch {
-      /* keep the current camera */
+      next = await openCamera(was).catch(() => null as unknown as MediaStream);
+      if (!next) return this.setStatus({ state: "error" });
     }
+    if (this.stopped) return next.getTracks().forEach((t) => t.stop());
+    this.stream = next;
+    this.video.srcObject = next;
+    await this.video.play().catch(() => {});
   }
 
   /** The camera actually in use, for the picker. */
   currentCamera() {
-    return this.stream?.getVideoTracks()[0]?.getSettings().deviceId ?? "";
+    const t = this.stream?.getVideoTracks()[0];
+    return t ? t.getSettings().deviceId || lastOpened : "";
   }
 
   async start() {
     this.stopped = false;
     this.setStatus({ state: "loading" });
     try {
-      this.stream = await openCamera(this.cameraId);
-      // No camera picked yet: prefer NVIDIA Broadcast's blurred feed if it's there.
-      if (!this.cameraId) {
-        const cams = await listCameras();
-        const nv = cams.find((c) => /nvidia broadcast/i.test(c.label));
-        const now = this.stream.getVideoTracks()[0]?.getSettings().deviceId;
-        if (nv && nv.deviceId !== now) {
+      // Camera names are known once the camera has been allowed before, so normally this
+      // goes straight to the right one.
+      const cams = await listCameras();
+      const known = cams.some((c) => c.label);
+      this.stream = await openCamera(chooseCamera(cams, this.cameraId));
+      if (!known && !this.cameraId) {
+        // Very first time: names only appear after this first open. If that was the webcam
+        // and Broadcast is there, let go of the webcam and give Broadcast a moment to take it back.
+        const nv = (await listCameras()).find((c) => NVIDIA.test(c.label));
+        if (nv && nv.deviceId !== this.currentCamera()) {
           this.stream.getTracks().forEach((t) => t.stop());
+          await sleep(1500);
           this.stream = await openCamera(nv.deviceId);
         }
       }
