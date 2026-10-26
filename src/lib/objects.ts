@@ -92,22 +92,33 @@ export function detectObjects(d: Detectors, src: Source, W: number, H: number, p
     return all ? sum / all : 0;
   };
 
-  // Hands first: they say where a phone in use would be.
-  const hands: Box[] = d.hands.detect(src).landmarks.map((l) => {
-    const xs = l.map((p) => p.x), ys = l.map((p) => p.y);
-    const x = Math.min(...xs), y = Math.min(...ys);
-    return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
-  });
-
+  // You first: only what's on or in front of you is worth looking at.
   const found: Omit<RawObject, "sharp" | "onYou">[] = [];
   for (const det of d.full.detect(src).detections) {
     const c = det.categories[0], b = det.boundingBox!;
     const box = { x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H };
     found.push({ ...box, label: c.categoryName, score: c.score, dark: c.categoryName === "person" ? 0 : dark(box), crop: false });
   }
+  const person = found.filter((o) => o.label === "person").sort((a, b) => b.score - a.score)[0];
+  // Inside the You box (a little slack for a phone held out in front). With no You box
+  // (out of view, or only your hands showing) everything counts, as before.
+  const PAD = 0.04;
+  const onYou = (o: Box) => {
+    if (!person) return true;
+    const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+    return cx >= person.x - PAD && cx <= person.x + person.w + PAD && cy >= person.y - PAD && cy <= person.y + person.h + PAD
+      && overlap(o, person) > 0.5 * o.w * o.h;
+  };
+
+  // Your hands say where a phone in use would be. Hands outside the You box are someone else's.
+  const hands: Box[] = d.hands.detect(src).landmarks.map((l) => {
+    const xs = l.map((p) => p.x), ys = l.map((p) => p.y);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  }).filter(onYou);
 
   // Nothing clear in the full picture: look closely around each hand.
-  if (!found.some((o) => o.label === "cell phone" && o.score >= 0.5)) {
+  if (!found.some((o) => o.label === "cell phone" && o.score >= 0.5 && onYou(o))) {
     const zg = zoom.getContext("2d") as Ctx2D | null;
     const Z = zoom.width;
     for (const h of zg ? hands : []) {
@@ -123,13 +134,14 @@ export function detectObjects(d: Detectors, src: Source, W: number, H: number, p
     }
   }
 
-  const person = found.filter((o) => o.label === "person").sort((a, b) => b.score - a.score)[0];
+  // Anything outside the You box is dropped, not just ignored.
   const youEdges = person ? edges(person) : 0;
-  const objects = found.map((o) => {
-    if (o.label === "person") return { ...o, sharp: 1, onYou: true };
-    const onYou = !person || overlap(o, person) > 0.5 * o.w * o.h;
-    const sharp = youEdges > 0 ? edges(o) / youEdges : 1;
-    return { ...o, onYou, sharp };
-  });
+  const objects = found
+    .filter((o) => o === person || (o.label !== "person" && onYou(o)))
+    .map((o) => {
+      if (o === person) return { ...o, sharp: 1, onYou: true };
+      const sharp = youEdges > 0 ? edges(o) / youEdges : 1;
+      return { ...o, onYou: true, sharp };
+    });
   return { objects, hands };
 }
