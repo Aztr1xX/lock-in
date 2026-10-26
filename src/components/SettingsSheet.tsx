@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Settings } from "../lib/store";
 import { loadSessions, saveSessions, uid } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
+import { listCameras } from "../lib/camera";
 import { IconClose, IconTrash } from "./Icons";
 
 interface Props {
@@ -24,6 +25,13 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
   const [examName, setExamName] = useState("");
   const [examDate, setExamDate] = useState("");
   const [msg, setMsg] = useState("");
+  const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
+  useEffect(() => {
+    void listCameras().then(setCams);
+    const onChange = () => void listCameras().then(setCams);
+    navigator.mediaDevices?.addEventListener?.("devicechange", onChange);
+    return () => navigator.mediaDevices?.removeEventListener?.("devicechange", onChange);
+  }, []);
 
   const backup = () => {
     const data = { app: "lock-in", version: 1, exportedAt: new Date().toISOString(), settings: s, sessions: loadSessions() };
@@ -125,6 +133,15 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
             </span>
             <input id="camera-toggle" type="checkbox" className="toggle" checked={s.camera} onChange={(e) => update({ camera: e.target.checked })} />
           </label>
+          {s.camera && (
+            <label className="text-row cam-pick">
+              <span>Which camera</span>
+              <select id="camera-pick" value={cams.some((c) => c.deviceId === s.cameraId) ? s.cameraId : ""} onChange={(e) => update({ cameraId: e.target.value })}>
+                <option value="">Automatic (NVIDIA Broadcast if it's on)</option>
+                {cams.filter((c) => c.deviceId).map((c, i) => <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>)}
+              </select>
+            </label>
+          )}
           {s.camera && (
             <div className="cam-opts">
               {([

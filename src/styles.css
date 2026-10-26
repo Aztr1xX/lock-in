@@ -876,3 +876,6 @@ body::after {
   flex: 1; min-width: 0; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-weight: 600;
 }
 .cc-nv { margin: 6px 0 0; }
+.cam-pick select {
+  max-width: 60%; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-weight: 600;
+}
