@@ -6,7 +6,7 @@ import {
 import { advance, fmtClock, focusMs, MIN, phaseDuration, phaseElapsed } from "./lib/timer";
 import { breakIdeas } from "./lib/content";
 import { chime, primeAudio, setFavicon } from "./lib/fx";
-import { onExtension, pingExtension, sendSession } from "./lib/bridge";
+import { type Helpers, onExtension, pingExtension, sendSession } from "./lib/bridge";
 import SetupSheet from "./components/SetupSheet";
 import Home from "./components/Home";
 import Focus from "./components/Focus";
@@ -25,10 +25,10 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [setupOpen, setSetupOpen] = useState(false);
-  const [blocker, setBlocker] = useState(false);
+  const [helpers, setHelpers] = useState<Helpers>({ blocker: false, closer: false });
 
   useEffect(() => {
-    const off = onExtension(setBlocker);
+    const off = onExtension(setHelpers);
     pingExtension();
     const id = setInterval(pingExtension, 5000);
     return () => { off(); clearInterval(id); };
@@ -45,7 +45,7 @@ export default function App() {
     send();
     const id = setInterval(send, 60_000);
     return () => clearInterval(id);
-  }, [activeId, activeSubject, activeGoal, activePhase, blocker]);
+  }, [activeId, activeSubject, activeGoal, activePhase, helpers.blocker]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((s) => {
@@ -227,7 +227,7 @@ export default function App() {
         onStats={() => setView("stats")}
         onSettings={() => setSettingsOpen(true)}
         onSetup={() => setSetupOpen(true)}
-        blocker={blocker}
+        helpers={helpers}
         updateSettings={updateSettings}
       />
     );
@@ -237,7 +237,7 @@ export default function App() {
     <>
       {screen}
       {settingsOpen && <SettingsSheet settings={settings} update={updateSettings} onClose={() => setSettingsOpen(false)} />}
-      {setupOpen && <SetupSheet blocker={blocker} onClose={() => setSetupOpen(false)} />}
+      {setupOpen && <SetupSheet helpers={helpers} onClose={() => setSetupOpen(false)} />}
     </>
   );
 }

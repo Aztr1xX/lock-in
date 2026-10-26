@@ -4,6 +4,7 @@ import { fmtDur, MIN } from "../lib/timer";
 import { plantStage, streak, todayMinutes, totalHours } from "../lib/stats";
 import { goalPlaceholders, greeting, subjectHue } from "../lib/content";
 import Ring from "./Ring";
+import type { Helpers } from "../lib/bridge";
 import Plant from "./Plant";
 import { IconChart, IconGear, IconFlame, IconPlus } from "./Icons";
 
@@ -16,11 +17,11 @@ interface Props {
   onStats: () => void;
   onSettings: () => void;
   onSetup: () => void;
-  blocker: boolean;
+  helpers: Helpers;
   updateSettings: (p: Partial<Settings>) => void;
 }
 
-export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, blocker, updateSettings }: Props) {
+export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, helpers, updateSettings }: Props) {
   const [subject, setSubject] = useState(settings.lastSubject || "General");
   const [goal, setGoal] = useState("");
   const [adding, setAdding] = useState(false);
@@ -192,12 +193,18 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
             <span className="edit">Change</span>
           </button>
 
-          <button className={`helpers ${blocker ? "ok" : ""}`} onClick={onSetup}>
-            <span className={`helper ${blocker ? "on" : ""}`}>
-              <span className="helper-dot" />
-              {blocker ? "Site blocker ready" : "Turn on site blocking"}
-            </span>
-            {!blocker && <span className="helpers-time">2 min setup</span>}
+          <button className={`helpers ${helpers.blocker && helpers.closer ? "ok" : ""}`} onClick={onSetup}>
+            {helpers.blocker ? (
+              <>
+                <span className="helper on"><span className="helper-dot" />Site blocker</span>
+                <span className={`helper ${helpers.closer ? "on" : ""}`}><span className="helper-dot" />Game closer</span>
+              </>
+            ) : (
+              <>
+                <span className="helper"><span className="helper-dot" />Turn on blocking</span>
+                <span className="helpers-time">5 min setup</span>
+              </>
+            )}
           </button>
         </section>
       </main>

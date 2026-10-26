@@ -5,7 +5,10 @@ window.addEventListener("message", (e) => {
   const d = e.data;
   if (!d || d.source !== "lockin-app") return;
   if (d.type === "ping") {
-    window.postMessage({ source: "lockin-ext", type: "hello", version: chrome.runtime.getManifest().version }, "*");
+    chrome.runtime.sendMessage({ kind: "helperStatus" }, (r) => {
+      void chrome.runtime.lastError;
+      window.postMessage({ source: "lockin-ext", type: "hello", version: chrome.runtime.getManifest().version, helper: !!r?.helper }, "*");
+    });
     return;
   }
   if (d.type === "session") {

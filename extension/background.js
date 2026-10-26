@@ -14,6 +14,33 @@ async function getState() {
 
 const isLocked = (st) => st.lockUntil > Date.now();
 
+// The Windows game closer listens on this PC only. It's optional: if it isn't
+// installed these calls just fail quietly.
+const HELPER = "http://127.0.0.1:47821";
+
+async function helperCall(path, body) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 1500);
+  try {
+    const res = await fetch(HELPER + path, {
+      method: body ? "POST" : "GET",
+      headers: { "X-LockIn": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function syncHelper() {
+  const st = await getState();
+  return helperCall("/session", { active: isLocked(st), lockUntil: st.lockUntil, subject: st.session?.subject ?? "" });
+}
+
 async function applyRules() {
   const st = await getState();
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
@@ -68,10 +95,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
         await chrome.storage.local.set({ lockUntil: 0, session: null });
         await applyRules();
       }
-      reply({ ok: true, locked: !!msg.active });
+      const helper = await syncHelper();
+      reply({ ok: true, locked: !!msg.active, helper: !!helper });
     } else if (msg?.kind === "status") {
       const st = await getState();
       reply({ locked: isLocked(st), ...st });
+    } else if (msg?.kind === "helperStatus") {
+      reply({ helper: !!(await helperCall("/status")) });
     } else if (msg?.kind === "allowChannel") {
       const st = await getState();
       if (!st.allowChannels.includes(msg.channel)) {
@@ -88,6 +118,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 });
 
 chrome.alarms.create("lockin-tick", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(() => applyRules());
+chrome.alarms.onAlarm.addListener(async () => {
+  await applyRules();
+  await syncHelper();
+});
 chrome.runtime.onStartup.addListener(() => applyRules());
 chrome.runtime.onInstalled.addListener(() => applyRules());
