@@ -193,6 +193,13 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
             <span className="edit">Change</span>
           </button>
 
+          <div className="helper-row">
+          <button className={`helpers ${settings.camera ? "ok" : ""}`} onClick={onSettings} title="Camera coach settings">
+            <span className={`helper ${settings.camera ? "on" : ""}`}>
+              <span className="helper-dot" />
+              {settings.camera ? "Camera coach on" : "Camera coach off"}
+            </span>
+          </button>
           <button className={`helpers ${helpers.blocker && helpers.closer ? "ok" : ""}`} onClick={onSetup}>
             {helpers.blocker ? (
               <>
@@ -206,6 +213,10 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
               </>
             )}
           </button>
+          </div>
+          {settings.camera && (
+            <p className="cam-hint">The camera starts when you press Start. Look for your bubble in the top right.</p>
+          )}
         </section>
       </main>
 
