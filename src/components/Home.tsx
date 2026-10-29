@@ -16,6 +16,7 @@ import { Sprite } from "./Visitors";
 import { type GardenState, hoursLeft, speciesById } from "../lib/garden";
 import { skyAt, skyVars } from "../lib/sky";
 import { IconChart, IconGear, IconFlame, IconPlus } from "./Icons";
+import { aName, lower } from "../lib/words";
 
 interface Props {
   settings: Settings;
@@ -83,8 +84,8 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
     () => {
       const g: string[] = [];
       if (cur && !cur.species) g.push("A new seed is ready. Pick what grows next!");
-      else if (cur && cur.growth < 1 && cur.species && cur.endH - hours <= 3) g.push(`${hoursLeft(cur.endH - hours)} until your ${speciesById(cur.species).name.toLowerCase()} is fully grown.`);
-      if (jar.next && jar.next.seeds - garden.seeds <= 6) g.push(`${jar.next.seeds - garden.seeds} more seeds and you unlock ${jar.next.name.toLowerCase()}.`);
+      else if (cur && cur.growth < 1 && cur.species && cur.endH - hours <= 3) g.push(`${hoursLeft(cur.endH - hours)} until your ${lower(speciesById(cur.species).name)} is fully grown.`);
+      if (jar.next && jar.next.seeds - garden.seeds <= 6) g.push(`${jar.next.seeds - garden.seeds} more seeds and you unlock ${lower(jar.next.name)}.`);
       const base = encouragements({
       name: settings.name, todayMin: today, goalMin, streakDays: st.days, streakSafe: st.todayDone,
       exam: exam ? { name: exam.name, days: exam.days } : undefined, hours, nextFlower: next, hour: new Date(now).getHours(),
@@ -111,13 +112,15 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
       ? (() => {
           const prev = earnedFlowers.length ? earnedFlowers[earnedFlowers.length - 1].hours : 12;
           const h = next.hours - hours;
-          return { pct: ((hours - prev) / (next.hours - prev)) * 100, text: `${h < 1 ? `${Math.ceil(h * 60)} min` : `${Math.ceil(h)} h`} to ${next.name === "First bloom" ? "its first flower" : `a ${next.name.toLowerCase()}`}` };
+          return { pct: ((hours - prev) / (next.hours - prev)) * 100, text: `${h < 1 ? `${Math.ceil(h * 60)} min` : `${Math.ceil(h)} h`} to ${next.name === "First bloom" ? "its first flower" : aName(next.name)}` };
         })()
       : { pct: 100, text: "Every flower collected" };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
+      // Not while a sheet or pop-up is open on top of Home.
+      if (document.querySelector("[aria-modal='true']")) return;
       if (e.code === "Space" && tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "BUTTON") {
         e.preventDefault();
         go();
@@ -290,7 +293,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
                 <button
                   className={`garden-plant cur ${poke2 % 2 ? "poke-a" : poke2 ? "poke-b" : ""}`}
                   onClick={() => (cur.species ? setPoke2((p) => p + 1) : onPickSeed())}
-                  aria-label={cur.species ? `Poke your ${speciesById(cur.species).name.toLowerCase()}` : "Pick a seed for your new plant"}
+                  aria-label={cur.species ? `Poke your ${lower(speciesById(cur.species).name)}` : "Pick a seed for your new plant"}
                 >
                   <GardenPlant species={cur.species} growth={cur.growth} pot={cur.pot} size={150} />
                 </button>
@@ -303,7 +306,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
               <span key={i} className="gs-firefly" style={{ left: `${12 + i * 19}%`, top: `${38 + ((i * 37) % 30)}%`, animationDelay: `${i * 0.7}s` }}><Sprite id="firefly" size={12} /></span>
             ))}
             <span className="gs-time">{sky.name}</span>
-            <button className="gs-jar" onClick={onGarden} title={jar.next ? `${jar.next.seeds - garden.seeds} more seeds until ${jar.next.name.toLowerCase()}` : "Every seed unlocked"}>
+            <button className="gs-jar" onClick={onGarden} title={jar.next ? `${jar.next.seeds - garden.seeds} more seeds until ${lower(jar.next.name)}` : "Every seed unlocked"}>
               <SeedJar seeds={garden.seeds} size={18} />
               <span><b>{garden.seeds}</b> seeds</span>
             </button>

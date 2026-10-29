@@ -13,6 +13,7 @@ import GardenPlant from "./GardenPlant";
 import SkyLayer from "./Sky";
 import { Sprite } from "./Visitors";
 import SeedJar from "./SeedJar";
+import { lower } from "../lib/words";
 
 interface Props {
   garden: GardenState;
@@ -391,14 +392,14 @@ function InfoCard({ thing, garden, flowers, stage, onPick, onCollection, onWater
   } else if (thing.kind === "jar") {
     const ns = nextSpecies(garden.seeds);
     title = `Seed jar · ${garden.seeds} seeds`;
-    body = ns ? `A seed drops in for every 25 focused minutes. ${ns.seeds - garden.seeds} more to unlock ${ns.name.toLowerCase()}.` : "A seed for every 25 minutes. You've unlocked every seed!";
+    body = ns ? `A seed drops in for every 25 focused minutes. ${ns.seeds - garden.seeds} more to unlock ${lower(ns.name)}.` : "A seed for every 25 minutes. You've unlocked every seed!";
     action = { label: "Open collection", run: onCollection };
   } else if (thing.kind === "hero") {
     const np = nextPot(hours);
     title = "Your first plant";
     body = stage < 12
       ? `Stage ${stage} of 12. ${hoursLeft(12 - hours)} until it's fully grown.`
-      : `${flowers} ${flowers === 1 ? "flower" : "flowers"} so far. ${POTS.find((p) => p.id === garden.pot)!.name} pot${np ? `, ${np.name.toLowerCase()} pot at ${np.hours} h` : ""}.`;
+      : `${flowers} ${flowers === 1 ? "flower" : "flowers"} so far. ${POTS.find((p) => p.id === garden.pot)!.name} pot${np ? `, ${lower(np.name)} pot at ${np.hours} h` : ""}.`;
     action = { label: "Water", run: onWater };
   } else if (thing.kind === "pond") {
     title = "Frog pond";

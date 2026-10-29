@@ -12,7 +12,8 @@ import Flower from "./Flower";
 import GardenPlant from "./GardenPlant";
 import SeedJar from "./SeedJar";
 import { Sprite } from "./Visitors";
-import { type SpeciesId, POTS, SPECIES, VISITORS, gardenState, speciesById } from "../lib/garden";
+import { type Plot, type SpeciesId, POTS, SPECIES, VISITORS, gardenState, speciesById } from "../lib/garden";
+import { lower } from "../lib/words";
 
 interface Props {
   session: Session;
@@ -62,9 +63,12 @@ export default function Done({ session, saved, test = false, prevSessions, sessi
   const newPot = gAfter.pot !== gBefore.pot ? POTS.find((p) => p.id === gAfter.pot)! : null;
   const newVisitors = VISITORS.filter((v) => gAfter.visitors.has(v.id) && !gBefore.visitors.has(v.id));
   const cur = gAfter.current;
-  const curBefore = cur ? gBefore.plots.find((p) => p.n === cur.n) : undefined;
-  const grewFrom = cur ? curBefore?.growth ?? 0 : Math.min(1, totalHours(prevSessions) / 12);
-  const grewTo = cur ? cur.growth : Math.min(1, hoursAfter / 12);
+  // If this session finished a plant and opened a new spot, show off the plant that just finished.
+  const opened = !!cur && !gBefore.plots.some((p) => p.n === cur.n);
+  const feat: Plot | null = opened ? (cur.n > 1 ? gAfter.plots[cur.n - 2] : null) : cur;
+  const grewFrom = feat ? gBefore.plots.find((p) => p.n === feat.n)?.growth ?? 0 : Math.min(1, totalHours(prevSessions) / 12);
+  const grewTo = feat ? feat.growth : Math.min(1, hoursAfter / 12);
+  const grewPct = Math.max(1, Math.floor(grewTo * 100) - Math.floor(grewFrom * 100));
   const finished = gAfter.plots.filter((p) => p.growth >= 1 && (gBefore.plots.find((b) => b.n === p.n)?.growth ?? 0) < 1);
   const [bar, setBar] = useState(grewFrom);
   useEffect(() => {
@@ -84,6 +88,8 @@ export default function Done({ session, saved, test = false, prevSessions, sessi
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The seed picker can open on top of this screen; leave its keys alone.
+      if (document.querySelector(".sheet-backdrop")) return;
       const n = Number(e.key);
       if (n >= 1 && n <= 5) pick(n);
       if (e.key === "Enter") onClose();
@@ -114,7 +120,11 @@ export default function Done({ session, saved, test = false, prevSessions, sessi
         <h1>{headline}</h1>
         <div className="done-stats">
           <div><b>{fmtDur(session.focusMs)}</b><span>focused</span></div>
-          <div><b>{session.rounds}</b><span>{session.rounds === 1 ? "round" : "rounds"}</span></div>
+          {session.rounds > 0 || !saved || newSeeds <= 0 ? (
+            <div><b>{session.rounds}</b><span>{session.rounds === 1 ? "round" : "rounds"}</span></div>
+          ) : (
+            <div><b>+{newSeeds}</b><span>{newSeeds === 1 ? "seed" : "seeds"}</span></div>
+          )}
           <div><b>{fmtDur(todayAfter * MIN)}</b><span>today</span></div>
           <div><b>{st.days}</b><span>day streak</span></div>
         </div>
@@ -182,19 +192,19 @@ export default function Done({ session, saved, test = false, prevSessions, sessi
         {gardenNews ? (
           <section className="done-garden">
             <div className="dg-plant">
-              {cur ? (
-                <GardenPlant species={cur.species} growth={cur.growth} pot={cur.pot} size={110} />
+              {feat ? (
+                <GardenPlant species={feat.species} growth={feat.growth} pot={feat.pot} size={110} />
               ) : (
                 <Plant stage={afterStage} hours={hoursAfter} size={110} pot={gAfter.pot} />
               )}
             </div>
             <div className="dg-info">
               <b>
-                {cur ? (cur.species ? `Your ${speciesById(cur.species).name.toLowerCase()}` : "Your seedling") : "Your plant"}
-                {grewTo >= 1 && grewFrom < 1 ? " is fully grown!" : ` grew ${Math.max(1, Math.round((grewTo - grewFrom) * 100))}%`}
+                {feat ? (feat.species ? `Your ${lower(speciesById(feat.species).name)}` : "Your seedling") : cur ? "Your first plant" : "Your plant"}
+                {grewTo >= 1 && grewFrom < 1 ? " is fully grown!" : ` grew ${grewPct}%`}
               </b>
               <span className="growth"><span style={{ width: `${Math.max(3, bar * 100)}%` }} /></span>
-              <small>{Math.floor(grewTo * 100)}% grown</small>
+              <small>{opened ? "A new plant spot just opened" : `${Math.floor(grewTo * 100)}% grown`}</small>
               {gAfter.target && <button className="seed-btn" onClick={onPickSeed}>Pick a seed</button>}
             </div>
             {newSeeds > 0 && (

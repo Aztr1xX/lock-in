@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, Settings } from "../lib/store";
 import { dayKey, fmtDur, MIN } from "../lib/timer";
 import { minutesByDay, plantStage, startOfWeek, streak, STREAK_MIN, subjectMinutes, totalHours } from "../lib/stats";
@@ -6,7 +6,14 @@ import { subjectHue } from "../lib/content";
 import Plant from "./Plant";
 import Flower from "./Flower";
 import { FLOWERS, flowersAt, nextFlower } from "../lib/flowers";
-import { potAt } from "../lib/garden";
+import {
+  type GardenState, type PotId, POTS, VISITORS, HERO_HOURS, hoursLeft, nextPot, nextSpecies, plotStart, seedsAt, speciesById, visitorProgress,
+} from "../lib/garden";
+import GardenPlant from "./GardenPlant";
+import Pot, { PotDefs } from "./Pot";
+import SeedJar, { jarFill } from "./SeedJar";
+import { Sprite } from "./Visitors";
+import { aName } from "../lib/words";
 import Timelapse from "./Timelapse";
 import { BADGES, earned } from "../lib/badges";
 import { IconBack, IconTrash } from "./Icons";
@@ -16,18 +23,29 @@ interface Props {
   settings: Settings;
   onBack: () => void;
   onDelete: (id: string) => void;
+  garden: GardenState;
+  onGarden: () => void;
+  onPickSeed: () => void;
 }
 
 const WEEKS = 18;
 const dayNames = ["Mon", "", "Wed", "", "Fri", "", "Sun"];
 
-export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
+export default function Stats({ sessions, settings, onBack, onDelete, garden, onGarden, onPickSeed }: Props) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Session | null>(null);
   const now = Date.now();
+  useEffect(() => {
+    if (!playing) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPlaying(null);
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [playing]);
   const week0 = startOfWeek(now);
   const weekMin = sessions.filter((s) => s.start >= week0).reduce((a, s) => a + s.focusMs / MIN, 0);
   const lastWeekMin = sessions.filter((s) => s.start >= week0 - 7 * 86_400_000 && s.start < week0).reduce((a, s) => a + s.focusMs / MIN, 0);
+  // Compare with the same point last week, so a Monday isn't up against a whole week.
+  const lastWeekSoFar = sessions.filter((s) => s.start >= week0 - 7 * 86_400_000 && s.start < now - 7 * 86_400_000).reduce((a, s) => a + s.focusMs / MIN, 0);
   const st = streak(sessions);
   const hours = totalHours(sessions);
   const stage = plantStage(hours);
@@ -90,7 +108,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
   const level = (m: number) => (m <= 0 ? 0 : m < STREAK_MIN ? 1 : m < settings.dailyGoalMin / 2 ? 2 : m < settings.dailyGoalMin ? 3 : 4);
   const recent = [...sessions].sort((a, b) => b.start - a.start).slice(0, 12);
   const ratingTrend = [...rated].sort((a, b) => a.start - b.start).slice(-20);
-  const weekDelta = weekMin - lastWeekMin;
+  const weekDelta = weekMin - lastWeekSoFar;
 
   return (
     <div className="stats screen-enter">
@@ -107,7 +125,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
         <div className="empty">
           <Plant stage={0} size={120} />
           <h2>Nothing here yet</h2>
-          <p>Finish your first session and your hours, streak and plant will show up here.</p>
+          <p>Finish your first session and your hours, streak and garden will show up here.</p>
           <button className="big-btn" onClick={onBack}>Start a session</button>
         </div>
       ) : (
@@ -117,7 +135,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
               <span className="tile-label">This week</span>
               <b>{fmtDur(weekMin * MIN)}</b>
               <small className={weekDelta >= 0 ? "up" : "down"}>
-                {lastWeekMin > 0 ? `${weekDelta >= 0 ? "▲" : "▼"} ${fmtDur(Math.abs(weekDelta) * MIN)} vs last week` : "First week, nice"}
+                {lastWeekSoFar > 0 ? (Math.abs(weekDelta) < 1 ? "Level with this time last week" : `${weekDelta > 0 ? "▲" : "▼"} ${fmtDur(Math.abs(weekDelta) * MIN)} vs this time last week`) : lastWeekMin > 0 ? `${fmtDur(lastWeekMin * MIN)} all last week` : !sessions.some((x) => x.start < week0 - 7 * 86_400_000) ? "First week, nice" : weekMin > 0 ? "Back at it this week" : "Fresh week, fresh start"}
               </small>
             </div>
             <div className="tile">
@@ -169,6 +187,8 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
             </div>
           </section>
 
+          <GardenPanel garden={garden} stage={stage} weekMin={weekMin} onGarden={onGarden} onPickSeed={onPickSeed} />
+
           <div className="two-col">
             <section className="panel">
               <h2>Subjects this week</h2>
@@ -187,19 +207,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
               )}
             </section>
 
-            <section className="panel plant-panel">
-              <h2>Your plant</h2>
-              <Plant stage={stage} hours={hours} size={120} pot={potAt(hours)} />
-              <p>
-                <b>Stage {stage} of 12.</b>{" "}
-                {stage >= 12
-                  ? (() => {
-                      const n = nextFlower(hours);
-                      return n ? `Fully grown. ${Math.ceil(n.hours - hours)} h until it grows a ${n.name.toLowerCase()}.` : "Every flower collected. Legend.";
-                    })()
-                  : `Grows a stage for every hour you focus. ${Math.ceil((stage + 1 - hours) * 60)} min to the next one.`}
-              </p>
-            </section>
+            <UpNext garden={garden} />
           </div>
 
           <section className="panel">
@@ -348,5 +356,150 @@ function RatingChart({ sessions }: { sessions: Session[] }) {
         <text x={w - pad.r} y={h - 4} className="axis" textAnchor="end">Latest</text>
       </svg>
     </div>
+  );
+}
+
+const potName = (id: PotId) => POTS.find((p) => p.id === id)!.name;
+
+function PotIcon({ kind, size = 34 }: { kind: PotId; size?: number }) {
+  return <svg viewBox="28 88 64 50" width={size} height={(size * 50) / 64} aria-hidden="true"><defs><PotDefs /></defs><Pot kind={kind} /></svg>;
+}
+
+/** Every plant you've grown, plus seeds, visitors and your newest pot. */
+function GardenPanel({ garden, stage, weekMin, onGarden, onPickSeed }: { garden: GardenState; stage: number; weekMin: number; onGarden: () => void; onPickSeed: () => void }) {
+  const { hours, plots, seeds } = garden;
+  const flowers = flowersAt(hours).length;
+  const grown = (hours >= HERO_HOURS ? 1 : 0) + plots.filter((p) => p.growth >= 1).length;
+  const weekSeeds = seeds - seedsAt(Math.max(0, hours - weekMin / 60));
+  const here = VISITORS.filter((v) => garden.visitors.has(v.id));
+  // Start scrolled to the newest plants, since that's where things are happening.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, []);
+  return (
+    <section className="panel sg">
+      <div className="sg-head">
+        <h2>Your garden <span className="muted small-count">{1 + plots.length} {plots.length ? "plants" : "plant"}</span></h2>
+        <button className="garden-walk" onClick={onGarden}>
+          Walk in
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
+        </button>
+      </div>
+      <div className="sg-row" ref={rowRef}>
+        <div className="sg-plant">
+          <Plant stage={stage} hours={hours} size={76} pot={garden.pot} />
+          <b>First plant</b>
+          <small>{stage >= 12 ? `${flowers} ${flowers === 1 ? "flower" : "flowers"}` : `Stage ${stage} of 12`}</small>
+        </div>
+        {plots.map((p) => (
+          <div key={p.n} className={`sg-plant ${p.growth < 1 ? "growing" : ""}`}>
+            <GardenPlant species={p.species} growth={p.growth} pot={p.pot} size={76} />
+            <b>{p.species ? speciesById(p.species).name : "Seedling"}</b>
+            {!p.species ? (
+              <button className="sg-pick" onClick={onPickSeed}>Pick a seed</button>
+            ) : p.growth >= 1 ? (
+              <small>Grown at {p.endH} h</small>
+            ) : (
+              <>
+                <span className="growth"><span style={{ width: `${Math.max(3, p.growth * 100)}%` }} /></span>
+                <small>{Math.floor(p.growth * 100)}% grown</small>
+              </>
+            )}
+          </div>
+        ))}
+        <div className="sg-plant sg-next">
+          <span className="sg-plot" aria-hidden="true" />
+          <b>Plant {plots.length + 2}</b>
+          <small>Opens at {plotStart(plots.length + 1)} h</small>
+        </div>
+      </div>
+      <div className="sg-facts">
+        <div>
+          <SeedJar seeds={seeds} size={26} />
+          <span><b>{seeds}</b> seeds<small>{weekSeeds > 0 ? `+${weekSeeds} this week` : "1 per 25 min"}</small></span>
+        </div>
+        <div>
+          <span className="sg-big" aria-hidden="true">🌿</span>
+          <span><b>{grown}</b> fully grown<small>{grown === 1 ? "plant" : "plants"} so far</small></span>
+        </div>
+        <div>
+          <span className="sg-sprites" aria-hidden="true">
+            {here.length ? here.slice(0, 3).map((v) => <Sprite key={v.id} id={v.id} size={24} />) : <span className="sg-big">🐞</span>}
+          </span>
+          <span title={here.map((v) => v.name).join(", ")}><b>{here.length}</b> of {VISITORS.length} visitors<small>{here.length ? here.map((v) => v.name).join(", ") : "None yet"}</small></span>
+        </div>
+        <div>
+          <PotIcon kind={garden.pot} />
+          <span><b>{potName(garden.pot)}</b> pot<small>Your newest</small></span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** The next few things you'll unlock, closest first. */
+function UpNext({ garden }: { garden: GardenState }) {
+  const { hours, seeds, current: cur, facts } = garden;
+  type Item = { key: string; icon: React.ReactNode; title: string; left: string; pct: number };
+  const items: Item[] = [];
+
+  if (cur) {
+    items.push({
+      key: "plot",
+      icon: <GardenPlant species={cur.species} growth={1} pot={cur.pot} size={30} />,
+      title: `${cur.species ? speciesById(cur.species).name : `Plant ${cur.n + 1}`} fully grown`,
+      left: hoursLeft(cur.endH - hours),
+      pct: cur.growth,
+    });
+  } else {
+    items.push({ key: "hero", icon: <Plant stage={12} size={30} />, title: "First plant fully grown", left: hoursLeft(HERO_HOURS - hours), pct: hours / HERO_HOURS });
+  }
+  const sp = nextSpecies(seeds);
+  if (sp) items.push({ key: "seed", icon: <GardenPlant species={sp.id} growth={1} size={30} />, title: `${sp.name} seed`, left: `${sp.seeds - seeds} seeds`, pct: jarFill(seeds).fill });
+  const np = nextPot(hours);
+  if (np) {
+    const prev = [...POTS].reverse().find((p) => p.hours <= hours)!.hours;
+    items.push({ key: "pot", icon: <PotIcon kind={np.id} size={30} />, title: `${np.name} pot`, left: hoursLeft(np.hours - hours), pct: (hours - prev) / (np.hours - prev) });
+  }
+  const nf = nextFlower(hours);
+  if (nf) {
+    const prev = flowersAt(hours).at(-1)?.hours ?? 0;
+    items.push({ key: "flower", icon: <Flower kind={nf.kind} size={28} />, title: nf.name === "First bloom" ? "Your first flower" : `${aName(nf.name).replace(/^./, (c) => c.toUpperCase())}`, left: hoursLeft(nf.hours - hours), pct: (hours - prev) / (nf.hours - prev) });
+  }
+  // The visitor you're closest to.
+  const next = VISITORS.filter((v) => !garden.visitors.has(v.id))
+    .map((v) => ({ v, p: visitorProgress(v.id, facts) }))
+    .sort((a, b) => b.p[0] / b.p[1] - a.p[0] / a.p[1])[0];
+  if (next) {
+    const need = next.p[1];
+    // Frog and cat need a fresh run that long, so count from the streak you're on now.
+    const have = next.v.id === "frog" || next.v.id === "cat" ? facts.streakDays : next.p[0];
+    const gap = need - have;
+    const id = next.v.id;
+    const left = id === "robin" ? hoursLeft(gap)
+      : id === "ladybug" || id === "snail" || id === "hedgehog" ? `${gap} goal ${gap === 1 ? "day" : "days"}`
+      : `${gap} more ${gap === 1 ? "day" : "days"}`;
+    items.push({ key: "visitor", icon: <Sprite id={id} size={28} />, title: `${next.v.name} ${next.v.kind === "streak" ? "visits" : "moves in"}`, left, pct: have / need });
+  }
+  items.sort((a, b) => b.pct - a.pct);
+
+  return (
+    <section className="panel">
+      <h2>Coming up next</h2>
+      <ul className="upnext">
+        {items.map((it) => (
+          <li key={it.key}>
+            <span className="un-icon">{it.icon}</span>
+            <span className="un-main">
+              <b>{it.title}</b>
+              <span className="growth"><span style={{ width: `${Math.max(3, Math.min(100, it.pct * 100))}%` }} /></span>
+            </span>
+            <small className="un-left">{it.left}</small>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

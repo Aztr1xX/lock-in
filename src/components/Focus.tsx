@@ -51,7 +51,8 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
   const left = pomodoro ? active.phaseDurMs - el : el;
   const progress = pomodoro ? el / active.phaseDurMs : (el % (60 * MIN)) / (60 * MIN);
   const focused = focusMs(active, t);
-  const todayTotal = todayMinutes(sessions, now) + focused / MIN;
+  // Test runs are never saved, so they don't count towards today.
+  const todayTotal = todayMinutes(sessions, now) + (active.test ? 0 : focused / MIN);
   const goalPct = Math.min(100, (todayTotal / settings.dailyGoalMin) * 100);
   const idea = breakIdeas[(active.breakIdea + ideaShift) % breakIdeas.length];
   const roundInSet = (active.rounds % settings.roundsBeforeLong) + (onBreak ? 0 : 1);
@@ -66,7 +67,8 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (ending) return;
+      // Escape on the camera sheet should only close the sheet, never end the session.
+      if (ending || document.querySelector(".sheet-backdrop")) return;
       if (e.code === "Space") {
         e.preventDefault();
         (paused ? onResume : onPause)();

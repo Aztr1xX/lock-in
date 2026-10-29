@@ -3,6 +3,7 @@ import type { Settings } from "../lib/store";
 import { loadSessions, saveSessions, uid } from "../lib/store";
 import { fmtDur, MIN } from "../lib/timer";
 import { listCameras } from "../lib/camera";
+import { loadGarden, saveGarden } from "../lib/garden";
 import { IconClose, IconTrash } from "./Icons";
 
 interface Props {
@@ -34,7 +35,7 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
   }, []);
 
   const backup = () => {
-    const data = { app: "lock-in", version: 1, exportedAt: new Date().toISOString(), settings: s, sessions: loadSessions() };
+    const data = { app: "lock-in", version: 1, exportedAt: new Date().toISOString(), settings: s, sessions: loadSessions(), garden: loadGarden() };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -54,6 +55,12 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
       const ids = new Set(mine.map((x) => x.id));
       const merged = [...mine, ...data.sessions.filter((x: { id: string }) => !ids.has(x.id))];
       saveSessions(merged);
+      // Seed picks: keep the ones made here, fill any gaps from the backup.
+      if (Array.isArray(data.garden?.picks)) {
+        const here = loadGarden().picks;
+        const from: (typeof here)[number][] = data.garden.picks;
+        saveGarden({ picks: Array.from({ length: Math.max(here.length, from.length) }, (_, i) => here[i] ?? from[i] ?? null) });
+      }
       update({ ...data.settings });
       setMsg(`Restored ${merged.length - mine.length} sessions. Reloading…`);
       setTimeout(() => location.reload(), 900);
