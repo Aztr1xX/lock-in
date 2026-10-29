@@ -6,6 +6,7 @@ import { subjectHue } from "../lib/content";
 import Plant from "./Plant";
 import Flower from "./Flower";
 import { FLOWERS, flowersAt, nextFlower } from "../lib/flowers";
+import { potAt } from "../lib/garden";
 import Timelapse from "./Timelapse";
 import { BADGES, earned } from "../lib/badges";
 import { IconBack, IconTrash } from "./Icons";
@@ -188,7 +189,7 @@ export default function Stats({ sessions, settings, onBack, onDelete }: Props) {
 
             <section className="panel plant-panel">
               <h2>Your plant</h2>
-              <Plant stage={stage} hours={hours} size={120} />
+              <Plant stage={stage} hours={hours} size={120} pot={potAt(hours)} />
               <p>
                 <b>Stage {stage} of 12.</b>{" "}
                 {stage >= 12

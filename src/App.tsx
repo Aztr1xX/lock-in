@@ -18,8 +18,11 @@ import Done from "./components/Done";
 import Stats from "./components/Stats";
 import SettingsSheet from "./components/SettingsSheet";
 import CamCheck from "./components/CamCheck";
+import GardenWorld from "./components/GardenWorld";
+import { Collection, SeedPicker } from "./components/GardenSheets";
+import { type SpeciesId, gardenState, loadGarden, saveGarden, speciesById } from "./lib/garden";
 
-type View = "home" | "stats";
+type View = "home" | "stats" | "garden";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -31,6 +34,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [setupOpen, setSetupOpen] = useState(false);
+  const [picks, setPicks] = useState(() => loadGarden().picks);
+  const [gardenSheet, setGardenSheet] = useState<"seed" | "collection" | null>(null);
   const [helpers, setHelpers] = useState<Helpers>({ blocker: false, closer: false });
   const [toast, setToast] = useState<ToastData | null>(null);
   const [camStatus, setCamStatus] = useState<CamStatus>({ state: "off", present: false, faceVisible: false });
@@ -319,6 +324,28 @@ export default function App() {
 
   const liveFocusMin = useMemo(() => (active ? focusMs(active, now) / MIN : 0), [active, now]);
 
+  // The garden is worked out from your sessions. Only your seed picks are saved.
+  const garden = useMemo(() => gardenState(sessions, settings, picks, 0, now), [sessions, settings, picks, now]);
+  // During a session the garden grows live. Test runs grow 25 times faster so you can watch it work.
+  const liveGarden = useMemo(
+    () => (active ? gardenState(sessions, settings, picks, liveFocusMin * (active.test ? 25 : 1), now) : null),
+    [active, sessions, settings, picks, liveFocusMin, now],
+  );
+  const pickSeed = useCallback((id: SpeciesId) => {
+    const target = garden.target;
+    if (!target) return;
+    const next = [...picks];
+    while (next.length < target.n) next.push(null);
+    next[target.n - 1] = id;
+    saveGarden({ picks: next });
+    setPicks(next);
+    setGardenSheet(null);
+    if (view !== "garden") {
+      showToast({ icon: "🌱", text: `${speciesById(id).name} planted. Go and see it in your garden.`, action: { label: "Visit", run: () => swapScreen(() => setView("garden")) } });
+      if (settings.sound) chime.sparkle();
+    }
+  }, [garden.target, picks, view, settings.sound, showToast]);
+
   let screen;
   if (active) {
     screen = (
@@ -337,6 +364,7 @@ export default function App() {
         onCamCheck={() => setCamCheck(true)}
         onSkipBreak={skipBreak}
         onFinish={finish}
+        garden={liveGarden}
       />
     );
   } else if (done) {
@@ -346,11 +374,23 @@ export default function App() {
         sessions={sessions}
         settings={settings}
         onRate={(r) => rate(done.session.id, r)}
+        picks={picks}
+        onPickSeed={() => setGardenSheet("seed")}
         onClose={() => {
           // Test runs leave nothing behind, time-lapse included.
           if (done.test) void deleteFrames(done.session.id);
           swapScreen(() => setDone(null));
         }}
+      />
+    );
+  } else if (view === "garden") {
+    screen = (
+      <GardenWorld
+        garden={garden}
+        settings={settings}
+        onPickSeed={() => setGardenSheet("seed")}
+        onCollection={() => setGardenSheet("collection")}
+        onBack={() => swapScreen(() => setView("home"))}
       />
     );
   } else if (view === "stats") {
@@ -364,6 +404,9 @@ export default function App() {
         liveFocusMin={liveFocusMin}
         onStart={start}
         onStats={() => swapScreen(() => setView("stats"))}
+        garden={garden}
+        onGarden={() => swapScreen(() => setView("garden"))}
+        onPickSeed={() => setGardenSheet("seed")}
         onSettings={() => setSettingsOpen(true)}
         onSetup={() => setSetupOpen(true)}
         onTest={() => start(settings.lastSubject, "Test run", true)}
@@ -389,6 +432,8 @@ export default function App() {
           onToggleSelf={active ? () => updateSettings({ showSelf: !settings.showSelf }) : undefined}
         />
       )}
+      {gardenSheet === "seed" && <SeedPicker garden={garden} onPick={pickSeed} onClose={() => setGardenSheet(null)} />}
+      {gardenSheet === "collection" && <Collection garden={garden} onClose={() => setGardenSheet(null)} />}
       {setupOpen && <SetupSheet helpers={helpers} onClose={() => setSetupOpen(false)} />}
     </>
   );

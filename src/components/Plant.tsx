@@ -1,12 +1,14 @@
 import { flowersAt } from "../lib/flowers";
 import { FlowerHead } from "./Flower";
+import type { PotId } from "../lib/garden";
+import Pot, { PotDefs } from "./Pot";
 
 /**
  * A little potted plant that grows a stage for every focused hour (0 to 12).
  * Past that it keeps earning flowers: the newest one crowns the stem and the
  * earlier ones bloom on side stems.
  */
-export default function Plant({ stage, hours = 0, size = 120, wilted = false }: { stage: number; hours?: number; size?: number; wilted?: boolean }) {
+export default function Plant({ stage, hours = 0, size = 120, wilted = false, pot = "terracotta" }: { stage: number; hours?: number; size?: number; wilted?: boolean; pot?: PotId }) {
   const s = Math.max(0, Math.min(12, stage));
   const stemTop = 92 - Math.min(64, 10 + s * 5.5);
   const leaves = Array.from({ length: Math.min(s, 9) }, (_, i) => {
@@ -40,10 +42,7 @@ export default function Plant({ stage, hours = 0, size = 120, wilted = false }: 
           <stop offset="0" stopColor="#ffe680" stopOpacity="0.7" />
           <stop offset="1" stopColor="#ffe680" stopOpacity="0" />
         </radialGradient>
-        <linearGradient id="pot-shade" x1="0" x2="1">
-          <stop offset="0" stopColor="#000" stopOpacity="0" />
-          <stop offset="1" stopColor="#000" stopOpacity="0.22" />
-        </linearGradient>
+        <PotDefs />
       </defs>
       <ellipse cx="60" cy="134" rx="30" ry="3.5" className="plant-shadow" />
       <g className="plant-sway">
@@ -96,9 +95,7 @@ export default function Plant({ stage, hours = 0, size = 120, wilted = false }: 
           </>
         )}
       </g>
-      <path d="M36 96 h48 l-6 34 a4 4 0 0 1 -4 3 h-28 a4 4 0 0 1 -4 -3 z" className="pot" />
-      <path d="M36 96 h48 l-6 34 a4 4 0 0 1 -4 3 h-28 a4 4 0 0 1 -4 -3 z" fill="url(#pot-shade)" />
-      <rect x="32" y="92" width="56" height="9" rx="3" className="pot-rim" />
+      <Pot kind={pot} />
     </svg>
   );
 }
