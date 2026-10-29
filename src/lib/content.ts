@@ -1,3 +1,5 @@
+import { aName } from "./words";
+
 export const breakIdeas: { title: string; detail: string }[] = [
   { title: "Refill your water", detail: "Walk to the kitchen and back. Your brain is mostly water anyway." },
   { title: "20-20-20 for your eyes", detail: "Look at something at least 6 m away for 20 seconds." },
@@ -85,7 +87,7 @@ export function encouragements(c: PepContext): string[] {
   if (c.nextFlower) {
     const h = c.nextFlower.hours - c.hours;
     const when = h < 1 ? `${Math.ceil(h * 60)} more min` : `${Math.ceil(h)} more ${Math.ceil(h) === 1 ? "hour" : "hours"}`;
-    const what = c.nextFlower.name === "First bloom" ? "I flower for the first time" : `I grow a ${c.nextFlower.name.toLowerCase()}`;
+    const what = c.nextFlower.name === "First bloom" ? "I flower for the first time" : `I grow ${aName(c.nextFlower.name)}`;
     if (h <= 5) out.push(`${when} and ${what}.`);
   }
   const shuffled = [...pep].sort(() => Math.random() - 0.5);

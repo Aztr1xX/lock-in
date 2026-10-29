@@ -394,7 +394,17 @@ export default function App() {
       />
     );
   } else if (view === "stats") {
-    screen = <Stats sessions={sessions} settings={settings} onBack={() => swapScreen(() => setView("home"))} onDelete={deleteSession} />;
+    screen = (
+      <Stats
+        sessions={sessions}
+        settings={settings}
+        garden={garden}
+        onGarden={() => swapScreen(() => setView("garden"))}
+        onPickSeed={() => setGardenSheet("seed")}
+        onBack={() => swapScreen(() => setView("home"))}
+        onDelete={deleteSession}
+      />
+    );
   } else {
     screen = (
       <Home

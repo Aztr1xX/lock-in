@@ -102,7 +102,9 @@ export function loadGarden(): GardenSave {
   try {
     const raw = localStorage.getItem(KEY);
     const g = raw ? (JSON.parse(raw) as Partial<GardenSave>) : {};
-    return { picks: Array.isArray(g.picks) ? g.picks : [] };
+    // Anything that isn't a real seed reads as "not picked yet", so a bad save can't break the garden.
+    const ok = new Set<string>(SPECIES.map((x) => x.id));
+    return { picks: Array.isArray(g.picks) ? g.picks.map((p) => (typeof p === "string" && ok.has(p) ? p : null)) : [] };
   } catch {
     return { picks: [] };
   }
@@ -154,6 +156,21 @@ export function visitorFacts(sessions: Session[], settings: Settings, extraToday
   const best = Math.max(cur, longestRun([...byDay.entries()].filter(([, m]) => m >= 25).map(([k]) => k)));
   const goalDays = [...byDay.values()].filter((m) => m >= settings.dailyGoalMin).length;
   return { streakDays: cur, bestStreak: best, goalDays, hours: totalHours(sessions) + extraTodayMin / 60 };
+}
+
+/** How far along you are towards a visitor: [where you are, what it needs]. */
+export function visitorProgress(id: VisitorId, f: VisitorFacts): [number, number] {
+  switch (id) {
+    case "bee": return [f.streakDays, 3];
+    case "butterfly": return [f.streakDays, 7];
+    case "hummingbird": return [f.streakDays, 14];
+    case "ladybug": return [f.goalDays, 1];
+    case "snail": return [f.goalDays, 5];
+    case "hedgehog": return [f.goalDays, 20];
+    case "frog": return [f.bestStreak, 7];
+    case "robin": return [f.hours, 50];
+    case "cat": return [f.bestStreak, 30];
+  }
 }
 
 export const visitorsFor = (f: VisitorFacts) => new Set(VISITORS.filter((v) => v.has(f)).map((v) => v.id));

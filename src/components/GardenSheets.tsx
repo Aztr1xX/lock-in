@@ -5,6 +5,7 @@ import Pot, { PotDefs } from "./Pot";
 import SeedJar, { jarFill } from "./SeedJar";
 import { Sprite } from "./Visitors";
 import { IconClose } from "./Icons";
+import { lower } from "../lib/words";
 
 function useEscape(onClose: () => void) {
   useEffect(() => {
@@ -66,7 +67,7 @@ export function Collection({ garden, onClose }: { garden: GardenState; onClose: 
           <SeedJar seeds={garden.seeds} size={58} />
           <div>
             <b>{garden.seeds} seeds</b>
-            <span>{next ? `${next.seeds - garden.seeds} more until ${next.name.toLowerCase()}` : "Every seed unlocked"}</span>
+            <span>{next ? `${next.seeds - garden.seeds} more until ${lower(next.name)}` : "Every seed unlocked"}</span>
             <span className="growth"><span style={{ width: `${Math.max(3, fill * 100)}%` }} /></span>
           </div>
         </div>
