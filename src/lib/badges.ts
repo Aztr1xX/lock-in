@@ -61,7 +61,7 @@ export function earned(sessions: Session[], settings: Settings): Set<string> {
   return got;
 }
 
-function longestRun(dayKeys: string[]): number {
+export function longestRun(dayKeys: string[]): number {
   const days = dayKeys.map((k) => new Date(k + "T12:00").getTime()).sort((a, b) => a - b);
   let best = 0, run = 0, prev: number | null = null;
   for (const t of days) {

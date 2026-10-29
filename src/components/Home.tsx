@@ -9,6 +9,12 @@ import Flower from "./Flower";
 import Ring from "./Ring";
 import type { Helpers } from "../lib/bridge";
 import Plant from "./Plant";
+import GardenPlant from "./GardenPlant";
+import SkyLayer from "./Sky";
+import SeedJar, { jarFill } from "./SeedJar";
+import { Sprite } from "./Visitors";
+import { type GardenState, hoursLeft, speciesById } from "../lib/garden";
+import { skyAt, skyVars } from "../lib/sky";
 import { IconChart, IconGear, IconFlame, IconPlus } from "./Icons";
 
 interface Props {
@@ -18,6 +24,9 @@ interface Props {
   liveFocusMin: number;
   onStart: (subject: string, goal: string) => void;
   onStats: () => void;
+  garden: GardenState;
+  onGarden: () => void;
+  onPickSeed: () => void;
   onSettings: () => void;
   onSetup: () => void;
   onTest: () => void;
@@ -26,7 +35,7 @@ interface Props {
   updateSettings: (p: Partial<Settings>) => void;
 }
 
-export default function Home({ settings, sessions, now, onStart, onStats, onSettings, onSetup, onTest, onCamCheck, helpers, updateSettings }: Props) {
+export default function Home({ settings, sessions, now, onStart, onStats, garden, onGarden, onPickSeed, onSettings, onSetup, onTest, onCamCheck, helpers, updateSettings }: Props) {
   const [subject, setSubject] = useState(settings.lastSubject || "General");
   const [adding, setAdding] = useState(false);
   const [newSubject, setNewSubject] = useState("");
@@ -68,17 +77,28 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
 
   // The plant's speech bubble: what's going on today, plus a bit of pep. Changes every 9 s.
   const next = nextFlower(hours);
+  const cur = garden.current;
+  const jar = jarFill(garden.seeds);
   const lines = useMemo(
-    () => encouragements({
+    () => {
+      const g: string[] = [];
+      if (cur && !cur.species) g.push("A new seed is ready. Pick what grows next!");
+      else if (cur && cur.growth < 1 && cur.species && cur.endH - hours <= 3) g.push(`${hoursLeft(cur.endH - hours)} until your ${speciesById(cur.species).name.toLowerCase()} is fully grown.`);
+      if (jar.next && jar.next.seeds - garden.seeds <= 6) g.push(`${jar.next.seeds - garden.seeds} more seeds and you unlock ${jar.next.name.toLowerCase()}.`);
+      const base = encouragements({
       name: settings.name, todayMin: today, goalMin, streakDays: st.days, streakSafe: st.todayDone,
       exam: exam ? { name: exam.name, days: exam.days } : undefined, hours, nextFlower: next, hour: new Date(now).getHours(),
-    }),
+      });
+      return [base[0], ...g, ...base.slice(1)];
+    },
     // Re-word only when the facts change, not on every clock tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [settings.name, Math.round(today), goalMin, st.days, st.todayDone, exam?.name, exam?.days, Math.floor(hours * 4)],
+    [settings.name, Math.round(today), goalMin, st.days, st.todayDone, exam?.name, exam?.days, Math.floor(hours * 4), cur?.species, garden.seeds],
   );
   const [lineN, setLineN] = useState(0);
   const [poke, setPoke] = useState(0);
+  const [poke2, setPoke2] = useState(0);
+  const sky = useMemo(() => skyAt(new Date(now)), [now]);
   useEffect(() => {
     const id = setInterval(() => setLineN((n) => n + 1), 9000);
     return () => clearInterval(id);
@@ -251,19 +271,70 @@ export default function Home({ settings, sessions, now, onStart, onStats, onSett
           </section>
         </main>
 
-        <aside className="garden card" aria-label="Your plant">
+        <aside className="garden card" aria-label="Your garden">
           <p className="speech" key={line} role="status">{line}</p>
-          <button
-            className={`garden-plant ${poke % 2 ? "poke-a" : poke ? "poke-b" : ""}`}
-            onClick={() => { setPoke((p) => p + 1); setLineN((n) => n + 1); }}
-            aria-label="Poke your plant"
-          >
-            <Plant stage={stage} hours={hours} size={230} wilted={!st.todayDone && st.days === 0 && sessions.length > 0} />
-          </button>
+          <div className={`garden-scene ${sky.night ? "is-night" : ""}`} style={skyVars(sky)}>
+            <SkyLayer sky={sky} />
+            <span className="gs-hill" />
+            <span className="gs-ground" />
+            <div className={`gs-plants ${cur ? "two" : ""}`}>
+              <button
+                className={`garden-plant ${poke % 2 ? "poke-a" : poke ? "poke-b" : ""}`}
+                onClick={() => { setPoke((p) => p + 1); setLineN((n) => n + 1); }}
+                aria-label="Poke your plant"
+              >
+                <Plant stage={stage} hours={hours} size={cur ? 150 : 200} pot={garden.pot} wilted={!st.todayDone && st.days === 0 && sessions.length > 0} />
+                {garden.visitors.has("ladybug") && <span className="gs-ladybug"><Sprite id="ladybug" size={18} /></span>}
+              </button>
+              {cur && (
+                <button
+                  className={`garden-plant cur ${poke2 % 2 ? "poke-a" : poke2 ? "poke-b" : ""}`}
+                  onClick={() => (cur.species ? setPoke2((p) => p + 1) : onPickSeed())}
+                  aria-label={cur.species ? `Poke your ${speciesById(cur.species).name.toLowerCase()}` : "Pick a seed for your new plant"}
+                >
+                  <GardenPlant species={cur.species} growth={cur.growth} pot={cur.pot} size={150} />
+                </button>
+              )}
+            </div>
+            {sky.stars <= 0.4 && garden.visitors.has("bee") && <span className="gs-flyer gs-bee"><Sprite id="bee" size={24} /></span>}
+            {sky.stars <= 0.4 && garden.visitors.has("butterfly") && <span className="gs-flyer gs-butterfly"><Sprite id="butterfly" size={26} /></span>}
+            {sky.stars <= 0.4 && garden.visitors.has("hummingbird") && <span className="gs-flyer gs-humming"><Sprite id="hummingbird" size={30} /></span>}
+            {sky.stars > 0.4 && [0, 1, 2, 3, 4].map((i) => (
+              <span key={i} className="gs-firefly" style={{ left: `${12 + i * 19}%`, top: `${38 + ((i * 37) % 30)}%`, animationDelay: `${i * 0.7}s` }}><Sprite id="firefly" size={12} /></span>
+            ))}
+            <span className="gs-time">{sky.name}</span>
+            <button className="gs-jar" onClick={onGarden} title={jar.next ? `${jar.next.seeds - garden.seeds} more seeds until ${jar.next.name.toLowerCase()}` : "Every seed unlocked"}>
+              <SeedJar seeds={garden.seeds} size={18} />
+              <span><b>{garden.seeds}</b> seeds</span>
+            </button>
+          </div>
           <div className="garden-info">
-            <b>{stage >= 12 ? (earnedFlowers.length > 1 ? `${earnedFlowers.length} flowers` : "Fully grown") : `Stage ${stage} of 12`}</b>
-            <span className="growth"><span style={{ width: `${Math.min(100, Math.max(3, growth.pct))}%` }} /></span>
-            <small>{growth.text}</small>
+            {cur && !cur.species ? (
+              <>
+                <b>A new seed is ready</b>
+                <button className="seed-btn" onClick={onPickSeed}>Pick a seed</button>
+                <small>It has already grown {Math.floor(cur.growth * 100)}% while it waited</small>
+              </>
+            ) : cur && cur.species ? (
+              <>
+                <b>{speciesById(cur.species).name} · {Math.floor(cur.growth * 100)}%</b>
+                <span className="growth"><span style={{ width: `${Math.min(100, Math.max(3, cur.growth * 100))}%` }} /></span>
+                <small>{cur.growth >= 1 ? "Fully grown" : `${hoursLeft(cur.endH - hours)} until it's fully grown`}</small>
+              </>
+            ) : (
+              <>
+                <b>{stage >= 12 ? (earnedFlowers.length > 1 ? `${earnedFlowers.length} flowers` : "Fully grown") : `Stage ${stage} of 12`}</b>
+                <span className="growth"><span style={{ width: `${Math.min(100, Math.max(3, growth.pct))}%` }} /></span>
+                <small>{growth.text}</small>
+              </>
+            )}
+          </div>
+          <div className="garden-actions">
+            <button className="garden-walk" onClick={onGarden}>
+              Walk in your garden
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
+            </button>
+
           </div>
           <button className="flower-shelf" onClick={onStats} aria-label="Your flower collection">
             {FLOWERS.map((f) => (
