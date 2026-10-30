@@ -701,6 +701,17 @@ body::after {
 .mc-day.exam::after { content: ""; position: absolute; inset: -1px; border-radius: 10px; border: 2px solid var(--break); }
 .mc-foot { display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
 .mc-foot b { color: var(--ink); }
+.mc-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.mc-today { border: 0; background: none; padding: 0; font: inherit; font-size: 0.72rem; font-weight: 700; color: var(--accent); cursor: pointer; animation: fade 0.3s both; }
+.mc-today:hover { text-decoration: underline; }
+.mc-head .icon-btn { position: relative; }
+.mc-head .icon-btn.has-exam::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--break); box-shadow: 0 0 0 2px var(--surface); }
+.mc-exams { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; font-size: 0.82rem; }
+.mc-exams li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; background: color-mix(in srgb, var(--break) 12%, transparent); animation: fade 0.4s both; }
+.mc-exams i { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--break); flex: none; }
+.mc-exams b { color: var(--ink); }
+.mc-exams span { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.mc-none { margin: 10px 0 0; font-size: 0.82rem; color: var(--muted); text-align: center; animation: fade 0.4s both; }
 
 /* ---------- focus extras ---------- */
 .focus-ring .ring-bar { transition: stroke 0.6s; }
@@ -977,8 +988,8 @@ body::after {
 .gw-thing { position: absolute; bottom: calc(var(--ground) - 10px); translate: -50% 0; }
 .gw-thing-hit { border: 0; background: none; padding: 0; display: block; cursor: pointer; border-radius: 20px; transition: transform 0.35s var(--spring); }
 .gw-thing-hit:hover { transform: translateY(-3px); }
-.gw-gate { bottom: calc(var(--ground) - 6px); }
-.gw-shed { bottom: calc(var(--ground) - 2px); }
+.gw-gate { bottom: calc(var(--ground) - 16px); }
+.gw-shed { bottom: calc(var(--ground) - 22px); }
 .is-night .shed-light { opacity: 1; }
 .shed-light { opacity: 0; transition: opacity 1s; }
 .gw-jar { bottom: calc(var(--ground) - 18px); }
@@ -1001,7 +1012,7 @@ body::after {
 .zz { position: absolute; left: 4px; top: -10px; font-size: 0.8rem; font-weight: 800; color: #fff; animation: zz 3s ease-in-out infinite; }
 .zz i { font-style: normal; font-size: 0.65rem; margin-left: 2px; }
 @keyframes zz { 0% { opacity: 0; transform: translate(0, 4px); } 50% { opacity: 1; } 100% { opacity: 0; transform: translate(-8px, -14px); } }
-.gw-robin { left: -24px; bottom: 74px; animation: robin 10s ease-in-out infinite; }
+.gw-robin { left: 126px; bottom: 104px; animation: robin 10s ease-in-out infinite; }
 @keyframes robin { 0%, 100% { transform: none; } 30% { transform: translateX(-10px); } 32% { transform: translateX(-10px) translateY(-6px); } 34% { transform: translateX(-18px); } 60% { transform: translateX(-18px) scaleX(-1); } 64% { transform: translateX(-4px) scaleX(-1); } }
 .gw-hedgehog { right: -56px; bottom: 6px; animation: hedge 12s ease-in-out infinite; }
 @keyframes hedge { 0%, 100% { transform: none; } 40% { transform: translateX(14px); } 70% { transform: translateX(14px); } }
