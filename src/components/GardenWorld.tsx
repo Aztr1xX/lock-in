@@ -219,39 +219,45 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
       </div>
       <div className="gw-layer gw-mid" ref={midRef} aria-hidden="true" style={{ width: worldW * scale * 0.4 + win.w, scale: String(scale), transformOrigin: "0 100%" }}>
         {Array.from({ length: Math.ceil((worldW * 0.4 + win.w) / 260) }, (_, i) => (
-          <span key={i} className={`tree t${i % 3}`} style={{ left: i * 260 + (i % 2 ? 60 : 0) }} />
+          <span key={i} className={`tree t${i % 3}`} style={{ left: 190 + i * 260 + (i % 2 ? 60 : 0) }} />
         ))}
       </div>
 
       <div className="gw-world" ref={worldRef} style={{ width: worldW, height: win.h / scale, transform: `scale(${scale})` }} onPointerDown={walkTo}>
         <div className="gw-ground" />
-        <div className="gw-fence" style={{ left: GATE_X + 40, width: worldW - GATE_X - 120 }} />
+        <div className="gw-fence" style={{ left: -200, width: GATE_X + 140 }} />
+        <div className="gw-fence" style={{ left: GATE_X + 60, width: worldW - GATE_X - 140 }} />
         <div className="gw-path" />
         <div className="gw-front" />
 
         {/* gate */}
         <div className="gw-thing gw-gate" style={{ left: GATE_X }}>
-          <svg viewBox="0 0 120 150" width="120" height="150" aria-hidden="true">
-            <path d="M14 150 V 60 Q 60 0 106 60 V 150" stroke="#f3eadb" strokeWidth="9" fill="none" />
-            <path d="M14 60 Q 60 0 106 60" stroke="#57b06a" strokeWidth="6" fill="none" strokeDasharray="2 7" strokeLinecap="round" />
-            {[30, 50, 70, 90].map((x, i) => <circle key={x} cx={x} cy={i % 3 ? 26 : 38} r="4" fill={i % 2 ? "#ff8fb5" : "#ffd166"} />)}
-            <rect x="26" y="66" width="68" height="22" rx="5" fill="#fff8ec" stroke="#d9c3a0" />
-            <text x="60" y="81.5" textAnchor="middle" fontSize="11" fontWeight="800" fill="#6a4a2a">{settings.name ? `${settings.name}'s` : "My"} garden</text>
-          </svg>
+          <Gate label={`${settings.name ? `${settings.name}'s` : "My"} garden`} />
         </div>
 
         {/* shed, with the cat on the roof */}
         <div className="gw-thing gw-shed" style={{ left: SHED_X }}>
-          <svg viewBox="0 0 160 150" width="160" height="150" aria-hidden="true">
+          <svg viewBox="0 0 160 166" width="160" height="166" aria-hidden="true">
+            <ellipse cx="80" cy="158" rx="78" ry="7" fill="rgba(0,0,0,0.16)" />
             <path d="M10 62 L80 14 L150 62 Z" fill="#c8664c" />
             <path d="M10 62 L80 14 L150 62" stroke="#a9503a" strokeWidth="5" fill="none" strokeLinejoin="round" />
             <rect x="22" y="58" width="116" height="92" fill="#f2d7a8" />
             {[34, 52, 70, 88, 106, 124].map((x) => <line key={x} x1={x} y1="60" x2={x} y2="150" stroke="#e2c18a" strokeWidth="2" />)}
-            <rect x="62" y="88" width="36" height="62" rx="3" fill="#8f5a3c" />
-            <circle cx="91" cy="120" r="2.4" fill="#ffd166" />
+            <rect x="18" y="146" width="124" height="10" rx="2" fill="#a7a097" />
+            <rect x="18" y="146" width="124" height="3" rx="1.5" fill="#c4bdb2" />
+            <rect x="62" y="88" width="36" height="58" rx="3" fill="#8f5a3c" />
+            <circle cx="91" cy="118" r="2.4" fill="#ffd166" />
+            <rect x="56" y="152" width="48" height="8" rx="3" fill="#bdb6ab" />
             <rect x="32" y="76" width="22" height="20" rx="2" fill="#bfe3ff" stroke="#fff" strokeWidth="3" />
             <rect x="108" y="76" width="22" height="20" rx="2" fill="#bfe3ff" stroke="#fff" strokeWidth="3" />
             <g className="shed-light"><rect x="32" y="76" width="22" height="20" rx="2" fill="#ffdc7a" /><rect x="108" y="76" width="22" height="20" rx="2" fill="#ffdc7a" /></g>
+            {[29, 105].map((x) => (
+              <g key={x}>
+                <circle cx={x + 6} cy="99" r="3" fill="#ff8fb5" /><circle cx={x + 14} cy="98" r="3" fill="#ffd166" /><circle cx={x + 22} cy="99" r="3" fill="#ff8fb5" />
+                <rect x={x} y="100" width="28" height="7" rx="2" fill="#a86b45" />
+              </g>
+            ))}
+            <path d="M14 156 q 4 -12 10 -2 q 3 -10 8 0" fill="#57b06a" /><path d="M128 156 q 4 -12 9 -2 q 4 -9 9 0" fill="#57b06a" />
           </svg>
           {v.has("cat") && (
             <button className="gw-critter gw-cat gw-thing-hit" onClick={() => setPetted({ id: "cat", n: Date.now() })} aria-label="Cat">
@@ -434,6 +440,48 @@ function InfoCard({ thing, garden, flowers, stage, onPick, onCollection, onWater
       {pct !== null && <span className="growth"><span style={{ width: `${Math.max(3, Math.min(100, pct * 100))}%` }} /></span>}
       {action && <button className="gw-card-btn" onClick={action.run}>{action.label} <kbd>Space</kbd></button>}
     </div>
+  );
+}
+
+/** The arch at the way in, with a little sign hanging from it. */
+function Gate({ label }: { label: string }) {
+  const font = label.length > 18 ? 10 : 12;
+  const w = Math.min(150, Math.max(92, Math.round(label.length * font * 0.6 + 26)));
+  const leaves = [[30, 112], [34, 90], [40, 70], [52, 54], [118, 54], [130, 70], [136, 90], [140, 112]];
+  return (
+    <svg viewBox="0 0 170 200" width="170" height="200" aria-hidden="true">
+      <ellipse cx="25" cy="194" rx="20" ry="5" fill="rgba(0,0,0,0.16)" />
+      <ellipse cx="145" cy="194" rx="20" ry="5" fill="rgba(0,0,0,0.16)" />
+      {/* posts */}
+      {[17, 137].map((x) => (
+        <g key={x}>
+          <rect x={x} y="96" width="16" height="98" rx="2" fill="#f3eadb" />
+          <rect x={x + 11} y="96" width="5" height="98" fill="#e2d5bf" />
+          <rect x={x - 3} y="90" width="22" height="9" rx="2.5" fill="#fffaf0" />
+        </g>
+      ))}
+      {/* arch */}
+      <path d="M25 96 C 25 30, 145 30, 145 96" stroke="#e2d5bf" strokeWidth="14" fill="none" />
+      <path d="M25 96 C 25 30, 145 30, 145 96" stroke="#f9f2e4" strokeWidth="9" fill="none" />
+      {/* vine */}
+      <path d="M25 140 C 18 120, 32 110, 25 96 C 25 30, 145 30, 145 96 C 138 110, 152 120, 145 140" stroke="#3f9a55" strokeWidth="2.4" fill="none" />
+      {leaves.map(([x, y], i) => (
+        <ellipse key={i} cx={x} cy={y} rx="6" ry="3.4" fill={i % 2 ? "#57b06a" : "#4aa35e"} transform={`rotate(${(i - 3.5) * 22} ${x} ${y})`} />
+      ))}
+      {[[36, 78, "#ff8fb5"], [46, 60, "#ffd166"], [124, 60, "#ff8fb5"], [134, 78, "#ffd166"], [24, 128, "#b79cf2"], [146, 124, "#ff8fb5"]].map(([x, y, c], i) => (
+        <g key={i}><circle cx={x} cy={y} r="4.5" fill={c as string} /><circle cx={x} cy={y} r="1.6" fill="#fff6d6" /></g>
+      ))}
+      {/* sign across the top, with a flower on each end */}
+      <rect x={85 - w / 2} y="30" width={w} height="28" rx="7" fill="#c99a68" />
+      <rect x={85 - w / 2 + 2.5} y="32.5" width={w - 5} height="23" rx="5" fill="#fff8ec" />
+      <text x="85" y={44.5 + font * 0.36} textAnchor="middle" fontSize={font} fontWeight="800" fill="#6a4a2a">{label}</text>
+      {[85 - w / 2, 85 + w / 2].map((x) => (
+        <g key={x}><circle cx={x} cy="31" r="5.5" fill="#ff8fb5" /><circle cx={x} cy="31" r="2" fill="#fff6d6" /></g>
+      ))}
+      {/* bush at each foot */}
+      <path d="M6 196 q 2 -16 14 -12 q 6 -10 14 0 q 10 -4 10 12 Z" fill="#4c9a4f" />
+      <path d="M126 196 q 2 -16 14 -12 q 6 -10 14 0 q 10 -4 10 12 Z" fill="#4c9a4f" />
+    </svg>
   );
 }
 
