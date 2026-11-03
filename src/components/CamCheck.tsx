@@ -83,6 +83,18 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
     onCamera(id);
     void cam?.setCamera(id);
   };
+  // "This is how I sit": a 3 second look that becomes your normal posture.
+  const [setPose, setSetPose] = useState<"idle" | "busy" | "done" | "fail">("idle");
+  const markPosture = async () => {
+    if (!cam || setPose === "busy") return;
+    setSetPose("busy");
+    setSetPose((await cam.setGoodPosture()) ? "done" : "fail");
+  };
+  const slumpText = (s: string[]) => {
+    const words: Record<string, string> = { sinking: "sinking down", "leaning in": "leaning in close", neck: "head pushed forward", "leaning sideways": "leaning to one side" };
+    const list = s.map((x) => words[x] ?? x);
+    return list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}` : list[0];
+  };
   const usingNvidia = cams.some((c) => c.deviceId === current && /nvidia broadcast/i.test(c.label));
   const phones = dbg?.objects.filter((o) => o.verdict === "phone") ?? [];
   const things = dbg?.objects.filter((o) => o.verdict !== "you") ?? [];
@@ -91,7 +103,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
         ["You", dbg.present ? "At your desk" : "Not in view. After 10 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
-        ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.posture === "hunched" ? "Hunched. Nudges after 3 minutes of this." : dbg.posture === "good" ? "Good" : "Needs your shoulders in view", dbg.posture === "hunched" ? "warn" : dbg.posture === "good" ? "ok" : "off"],
+        ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.slumps.length ? `${slumpText(dbg.slumps)[0].toUpperCase() + slumpText(dbg.slumps).slice(1)}. Nudges if it lasts 3 minutes.` : dbg.posture === "good" || dbg.posture === "hunched" ? "Good" : "Needs your shoulders in view", dbg.slumps.length ? "warn" : dbg.posture === "good" ? "ok" : "off"],
         ["Phone", phones.length || dbg.phoneSure > 0
           ? `${phones.length ? phones[0].why[0].toUpperCase() + phones[0].why.slice(1) : "Not seen right now"}. ${Math.round(dbg.phoneSure * 100)}% sure you're on it. It only nudges at 100%, after about 8 steady seconds.`
           : "None in your hand", dbg.alert === "phone" ? "warn" : "ok"],
@@ -153,6 +165,21 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
           </dl>
         )}
 
+        {on && (
+          <div className="cc-posture">
+            <button className="ghost-btn" onClick={markPosture} disabled={setPose === "busy"}>
+              {setPose === "busy" ? "Hold still…" : "This is how I sit"}
+            </button>
+            <span>
+              {setPose === "done"
+                ? "Saved. Posture is now measured against that."
+                : setPose === "fail"
+                  ? "Couldn't see both shoulders. Sit back a little and try again."
+                  : "Sit the way you normally study, then tap. Otherwise it learns from your first sessions."}
+            </span>
+          </div>
+        )}
+
         {things.length > 0 && (
           <div className="cc-objects">
             <h3>Things it spotted</h3>
@@ -169,8 +196,8 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
         )}
 
         <p className="hint">
-          Hold up your phone, your calculator and your iPad one at a time to see how each is read. Only a dark,
-          phone-sized thing near your hand counts as your phone. Your card holder is fine.
+          Hold up your phone, your calculator and your iPad one at a time to see how each is read. Only a
+          phone-sized thing in or by your hand counts as your phone. Your card holder is fine.
         </p>
         {onToggleSelf && (
           <label className="toggle-row">

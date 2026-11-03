@@ -6,7 +6,8 @@
 // from head-and-shoulders pose, not from seeing your face.
 
 import type { FaceLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
-import { type Box, type Detectors, type Found, type RawObject, detectObjects, makeDetectors } from "./objects";
+import { type Body, type Box, type Detectors, type Found, ZOOM, detectObjects, judgePhone, makeDetectors } from "./objects";
+import { type Baseline, type Sample, type Slump, Smoother, baselineOf, measure, rememberBaseline, savedBaseline, slumps } from "./posture";
 import ObjectsWorker from "./objects.worker?worker";
 
 export type CamEvent = "away" | "back" | "phone" | "posture" | "drowsy" | "calibrated";
@@ -48,6 +49,8 @@ export interface CamDebug {
   /** How sure it is that you're on your phone right now, 0..1. It warns at 1. */
   phoneSure: number;
   posture: "calibrating" | "good" | "hunched" | "unknown";
+  /** Which ways you're slumped right now, if any. */
+  slumps: Slump[];
   /** What the camera border should flash: red for phone, orange for posture. */
   alert: "phone" | "posture" | null;
 }
@@ -78,7 +81,9 @@ function loadModels(): Promise<Models> {
     const [pose, face] = await Promise.all([
       make((delegate) =>
         mp.PoseLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: "/mediapipe/pose_landmarker_lite.task", delegate },
+          // The full model, not the lite one: steadier shoulders and ears, which is what
+          // posture is measured from. It runs on the graphics chip, so it's still quick.
+          baseOptions: { modelAssetPath: "/mediapipe/pose_landmarker_full.task", delegate },
           runningMode: "VIDEO",
           numPoses: 1,
         }),
@@ -112,13 +117,15 @@ class ObjectFinder {
   busy = false;
   private probe = document.createElement("canvas");
   private zoom = document.createElement("canvas");
+  private zoomSmall = document.createElement("canvas");
 
   init(): Promise<void> {
     this.ready ??= this.startWorker().catch(async () => {
       this.worker?.terminate();
       this.worker = null;
       this.probe.width = 320; this.probe.height = 240;
-      this.zoom.width = this.zoom.height = 320;
+      this.zoom.width = this.zoom.height = ZOOM;
+      this.zoomSmall.width = this.zoomSmall.height = 320;
       this.local = await makeDetectors("/mediapipe");
     });
     this.ready.catch(() => (this.ready = null));
@@ -148,7 +155,7 @@ class ObjectFinder {
     if (this.busy) return null;
     this.busy = true;
     try {
-      if (this.local) return detectObjects(this.local, v, v.videoWidth, v.videoHeight, this.probe, this.zoom);
+      if (this.local) return detectObjects(this.local, v, v.videoWidth, v.videoHeight, this.probe, this.zoom, this.zoomSmall);
       if (!this.worker) return null;
       const frame = await createImageBitmap(v);
       const id = ++this.n;
@@ -172,6 +179,10 @@ const getFinder = () => (finder ??= new ObjectFinder());
 // and a hard limit they can't meet makes Chrome refuse them.
 const CAM_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } };
 const NVIDIA = /nvidia broadcast/i;
+const iou = (a: Box, b: Box) => {
+  const i = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return i / (a.w * a.h + b.w * b.h - i || 1);
+};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -220,16 +231,14 @@ const PHONE_COOLDOWN = 3 * 60_000;
 const POSTURE_HOLD = 3 * 60_000;
 const POSTURE_COOLDOWN = 10 * 60_000;
 const CALIBRATE_MS = 45_000;
+const SET_POSTURE_MS = 3_000; // "This is how I sit" listens for this long
 const EYES_CLOSED_MS = 2_500;
 const YAWN_MS = 1_500;
 const DROWSY_COOLDOWN = 10 * 60_000;
 const TICK_MS = 500;
-// Phone vs the other things on Ryan's desk. His phone is dark and small; his Casio is
-// light grey/white; his iPad is far bigger in frame.
-const MAX_PHONE_AREA = 0.12; // share of the frame; an iPad at desk distance is bigger
-const MIN_DARK = 0.25; // share of dark pixels. His phone is black (a card in the back holder adds a light patch); the Casio is mostly white
-const MIN_SHARP = 0.35; // edge strength next to yours; a blurred background is far lower
-const HAND_REACH = 0.16; // a wrist this close to the box (of frame width) means it's in hand
+// Once a phone is seen, a less sure sighting in the same spot still counts: fingers and
+// angles make the score dip while you scroll, but it's the same phone.
+const TRACK_SCORE = 0.3;
 const FRAME_MS = 10_000;
 const NORMAL = { away: AWAY_MS, calibrate: CALIBRATE_MS, postureHold: POSTURE_HOLD, postureCool: POSTURE_COOLDOWN, phoneCool: PHONE_COOLDOWN, drowsyCool: DROWSY_COOLDOWN };
 // Test runs: everything fires fast so you can try it in a minute.
@@ -255,10 +264,15 @@ export class FocusCamera {
   private phoneLog: number[] = []; // best phone score per check, 0 when none
   private personAt = 0;
   private lastPhoneNudge = 0;
+  private lastPhoneBox: Box | null = null;
   // posture
-  private calib: { w: number[]; y: number[] } = { w: [], y: [] };
+  private calib: Sample[] = [];
   private calibStart = 0;
-  private base: { w: number; y: number } | null = null;
+  private calibDone = false;
+  private baseFor: string | null = null; // the camera the posture normal belongs to
+  private base: Baseline | null = null;
+  private smooth = new Smoother();
+  private setting: { until: number; samples: Sample[]; done: (ok: boolean) => void } | null = null;
   private slouchSince = 0;
   private lastPosture = 0;
   // drowsy
@@ -275,7 +289,7 @@ export class FocusCamera {
   private snap = document.createElement("canvas");
   debug: CamDebug = {
     points: [], face: null, objects: [], hands: [], present: false, faceVisible: false,
-    eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, phoneSure: 0, posture: "unknown", alert: null,
+    eyesClosed: false, yawning: false, lookingDown: false, phoneHits: 0, phoneSure: 0, posture: "unknown", slumps: [], alert: null,
   };
 
   constructor(
@@ -417,7 +431,18 @@ export class FocusCamera {
     this.eyesClosedSince = 0;
     this.phoneHits = 0;
     this.phoneLog = [];
-    if (on && !this.base && !this.calibStart) this.calibStart = now;
+    this.lastPhoneBox = null;
+    this.smooth.reset();
+    if (on && !this.calibStart) this.calibStart = now;
+  }
+
+  /**
+   * "This is how I sit": listens for 3 seconds and makes that your normal from now on,
+   * for this camera. Resolves false if it couldn't see your shoulders.
+   */
+  setGoodPosture(): Promise<boolean> {
+    this.setting?.done(false);
+    return new Promise((done) => (this.setting = { until: Date.now() + SET_POSTURE_MS, samples: [], done }));
   }
 
   private setStatus(p: Partial<CamStatus>) {
@@ -438,7 +463,6 @@ export class FocusCamera {
     const pose = this.models.pose.detectForVideo(v, ts);
     const lm = pose.landmarks[0];
     let present = false;
-    let shoulders: { w: number; y: number } | null = null;
     const points: CamDebug["points"] = [];
     const wrists: { x: number; y: number }[] = [];
     if (lm) {
@@ -448,14 +472,17 @@ export class FocusCamera {
         if (p && (p.visibility ?? 0) > 0.5) points.push({ x: p.x, y: p.y, part });
         if (p && part === "wrist" && (p.visibility ?? 0) > 0.3) wrists.push({ x: p.x, y: p.y });
       }
-      const vis = (i: number) => (lm[i]?.visibility ?? 0) > 0.5;
-      const ls = lm[11], rs = lm[12];
-      const shouldersSeen = vis(11) && vis(12);
       // Pose alone can "find" someone in an empty chair, so it only counts when it's confident.
       const sure = (i: number) => (lm[i]?.visibility ?? 0) > 0.8;
       present = [0, 2, 5, 7, 8].filter(sure).length >= 2 || (sure(11) && sure(12));
-      if (shouldersSeen) shoulders = { w: Math.hypot(ls.x - rs.x, ls.y - rs.y), y: (ls.y + rs.y) / 2 };
     }
+    // Posture is measured in true proportions: pose points are shares of width and of
+    // height, so heights are put on the same scale as widths first.
+    const aspect = v.videoHeight / v.videoWidth;
+    const raw = measure(lm?.map((p) => ({ x: p.x, y: p.y * aspect, visibility: p.visibility })));
+    const sample = this.smooth.push(raw);
+    // Shoulder width as a share of the frame width, for sizing up a phone.
+    const shoulderW = raw ? raw.w : null;
 
     // ---- face: eyes and yawns, only when you're facing the screen
     let faceVisible = false;
@@ -481,8 +508,8 @@ export class FocusCamera {
 
     // ---- person and phone, checked about every second (in the background)
     if (this.tickN % 2 === 0 && !getFinder().busy) {
-      const seenWrists = wrists;
-      void getFinder().find(v).then((f) => f && this.stream && this.onObjects(f, seenWrists, Date.now()));
+      const body: Body = { wrists, shoulders: shoulderW };
+      void getFinder().find(v).then((f) => f && this.stream && this.onObjects(f, body, Date.now()));
     }
     const personSeen = now - this.personAt < PERSON_KEEP;
     if (personSeen) present = true;
@@ -499,7 +526,8 @@ export class FocusCamera {
       lookingDown: !!faceBox && !faceVisible,
       phoneHits: this.phoneHits,
       phoneSure: this.phoneSure(),
-      posture: !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
+      posture: !raw ? "unknown" : !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
+      slumps: this.base && raw && sample ? slumps(sample, this.base) : [],
       alert: this.phoneHits >= 4 && this.phoneSure() >= 0.6 ? "phone" : this.slouchSince && now - this.slouchSince >= POSTURE_FLASH ? "posture" : null,
     };
 
@@ -516,6 +544,22 @@ export class FocusCamera {
         g.drawImage(v, 0, 0, 320, 240);
         g.restore();
         this.snap.toBlob((b) => b && this.onFrame(b), "image/jpeg", 0.7);
+      }
+    }
+
+    if (this.setting) {
+      if (raw) this.setting.samples.push(raw);
+      if (now >= this.setting.until) {
+        const b = baselineOf(this.setting.samples, this.currentCamera(), now, 4);
+        const done = this.setting.done;
+        this.setting = null;
+        if (b) {
+          this.base = { ...b, set: true };
+          rememberBaseline(this.base);
+          this.calibDone = true;
+          this.slouchSince = 0;
+        }
+        done(!!b);
       }
     }
 
@@ -547,31 +591,9 @@ export class FocusCamera {
       if (this.features.phone) this.onEvent("phone");
     }
 
-    // posture: calibrate on how you normally sit, then watch for a hunch that sticks.
-    // Leaning in (shoulders wider in frame) or sinking (shoulders lower) counts.
-    // Just tilting your head down to your iPad doesn't.
-    if (shoulders) {
-      if (!this.base && this.calibStart) {
-        this.calib.w.push(shoulders.w);
-        this.calib.y.push(shoulders.y);
-        if (now - this.calibStart >= this.k.calibrate && this.calib.w.length >= 15) {
-          const med = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
-          this.base = { w: med(this.calib.w), y: med(this.calib.y) };
-          this.onEvent("calibrated");
-        }
-      } else if (this.base) {
-        const slouched = shoulders.w > this.base.w * 1.18 || shoulders.y > this.base.y + 0.08;
-        if (slouched) {
-          if (!this.slouchSince) this.slouchSince = now;
-          if (now - this.slouchSince >= this.k.postureHold && now - this.lastPosture > this.k.postureCool) {
-            this.lastPosture = now;
-            this.slouchSince = 0;
-            this.counts.posture++;
-            if (this.features.posture) this.onEvent("posture");
-          }
-        } else this.slouchSince = 0;
-      }
-    }
+    // posture: compared with how you normally sit (see posture.ts), and only a slump
+    // that sticks for minutes counts. Just tilting your head down to your iPad doesn't.
+    this.postureTick(raw, sample, now);
 
     // drowsy: long eye closures, or three big yawns in ten minutes
     let drowsy = false;
@@ -610,8 +632,52 @@ export class FocusCamera {
     this.minute.good += good;
   }
 
-  private onObjects(found: Found, wrists: { x: number; y: number }[], now: number) {
+  private postureTick(raw: Sample | null, sample: Sample | null, now: number) {
+    // Your normal from earlier sessions works straight away. This session still takes a
+    // quiet look at how you sit, which keeps it up to date if you've moved the camera.
+    // Switch cameras and it picks up that camera's normal (or learns one).
+    const camId = this.currentCamera();
+    if (camId !== this.baseFor) {
+      this.baseFor = camId;
+      this.base = savedBaseline(camId);
+      this.calib = [];
+      this.calibDone = false;
+      this.calibStart = now;
+      this.slouchSince = 0;
+    }
+    // Quietly learn this session's normal in the first minute or so. Samples that look
+    // slumped next to your saved normal are skipped, so a slouchy start can't sneak in.
+    if (!this.calibDone && this.calibStart && raw) {
+      if (!this.base || !slumps(raw, this.base).length) this.calib.push(raw);
+      if (now - this.calibStart >= this.k.calibrate && this.calib.length >= 15) {
+        this.calibDone = true;
+        const b = baselineOf(this.calib, this.currentCamera(), now);
+        const first = !this.base;
+        if (b) {
+          rememberBaseline(b);
+          this.base = savedBaseline(b.cam) ?? b;
+          if (first) this.onEvent("calibrated");
+        }
+      }
+    }
+    if (!this.base || !sample || !raw) {
+      this.slouchSince = 0; // can't see your shoulders, so no opinion
+      return;
+    }
+    if (slumps(sample, this.base).length) {
+      if (!this.slouchSince) this.slouchSince = now;
+      if (now - this.slouchSince >= this.k.postureHold && now - this.lastPosture > this.k.postureCool) {
+        this.lastPosture = now;
+        this.slouchSince = 0;
+        this.counts.posture++;
+        if (this.features.posture) this.onEvent("posture");
+      }
+    } else this.slouchSince = 0;
+  }
+
+  private onObjects(found: Found, body: Body, now: number) {
     const objects: DebugObject[] = [];
+    const last = this.lastPhoneBox;
     for (const o of found.objects) {
       const box = { x: o.x, y: o.y, w: o.w, h: o.h };
       if (o.label === "person") {
@@ -621,10 +687,13 @@ export class FocusCamera {
         }
         continue;
       }
-      objects.push({ ...box, label: o.label, score: o.score, ...this.judgePhone(o, wrists, found.hands) });
+      const tracked = !!last && o.label === "cell phone" && iou(o, last) > 0.3;
+      objects.push({ ...box, label: o.label, score: o.score, ...judgePhone(o, body, found.hands, tracked ? TRACK_SCORE : undefined) });
     }
     this.debug = { ...this.debug, objects, hands: found.hands };
-    const best = Math.max(0, ...objects.filter((o) => o.verdict === "phone").map((o) => o.score));
+    const phones = objects.filter((o) => o.verdict === "phone").sort((a, b) => b.score - a.score);
+    this.lastPhoneBox = phones[0] ?? null;
+    const best = phones[0]?.score ?? 0;
     this.phoneLog = [...this.phoneLog, best].slice(-PHONE_WINDOW);
     this.phoneHits = this.phoneLog.filter((x) => x > 0).length;
   }
@@ -634,23 +703,6 @@ export class FocusCamera {
     if (!seen.length) return 0;
     const mean = seen.reduce((a, b) => a + b, 0) / seen.length;
     return Math.min(1, seen.length / PHONE_HITS) * Math.min(1, mean / PHONE_MEAN);
-  }
-
-  /** Is this detection really a phone you're using, or your calculator, iPad, or something behind you? */
-  private judgePhone(o: RawObject, wrists: { x: number; y: number }[], hands: Box[]): { verdict: DebugObject["verdict"]; why: string } {
-    const { label, score } = o;
-    if (label !== "cell phone") return { verdict: "ignored", why: label === "remote" ? "looks like a calculator" : label === "laptop" || label === "tv" ? "looks like your iPad" : label };
-    if (score < (o.crop ? 0.5 : 0.45)) return { verdict: "ignored", why: "not sure enough" };
-    if (!o.onYou) return { verdict: "ignored", why: "not on or in front of you" };
-    if (o.sharp < MIN_SHARP) return { verdict: "ignored", why: "blurry, so it's in the background" };
-    if (o.w * o.h > MAX_PHONE_AREA) return { verdict: "ignored", why: "too big, probably your iPad" };
-    if (o.dark < MIN_DARK) return { verdict: "ignored", why: "too light, probably your calculator" };
-    const near = (b: Box, pad: number) => hands.some((h) => h.x < b.x + b.w + pad && h.x + h.w > b.x - pad && h.y < b.y + b.h + pad && h.y + h.h > b.y - pad);
-    if (near(o, 0.03)) return { verdict: "phone", why: "phone in your hand" };
-    const nearWrist = wrists.some((w) => w.x > o.x - HAND_REACH && w.x < o.x + o.w + HAND_REACH && w.y > o.y - HAND_REACH && w.y < o.y + o.h + HAND_REACH);
-    if (nearWrist && score >= 0.55) return { verdict: "phone", why: "phone in your hand" };
-    if (!hands.length && !wrists.length && score >= 0.7) return { verdict: "phone", why: "phone (hands out of view)" };
-    return { verdict: "ignored", why: "phone not in your hands" };
   }
 
   private flushMinute(force = false) {

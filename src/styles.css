@@ -740,6 +740,9 @@ body::after {
 .cc-row.warn { border-left-color: var(--break); }
 .cc-row dt { font-weight: 700; font-size: 0.85rem; }
 .cc-row dd { margin: 0; color: var(--muted); font-size: 0.88rem; }
+.cc-posture { display: flex; gap: 12px; align-items: center; margin: 4px 0 10px; }
+.cc-posture .ghost-btn { flex: none; }
+.cc-posture span { color: var(--muted); font-size: 0.85rem; }
 .cc-objects h3 { font-size: 0.85rem; margin: 8px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .cc-objects ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .cc-objects li { display: flex; gap: 8px; align-items: baseline; font-size: 0.88rem; padding: 4px 0; }
