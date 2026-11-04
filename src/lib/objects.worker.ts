@@ -8,8 +8,8 @@ const probe = new OffscreenCanvas(320, 240);
 const zoom = new OffscreenCanvas(ZOOM, ZOOM);
 const zoomSmall = new OffscreenCanvas(320, 320);
 
-self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?: string }>) => {
-  const { id, frame, base } = e.data;
+self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?: string; phones?: boolean }>) => {
+  const { id, frame, base, phones = true } = e.data;
   try {
     if (base) {
       detectors ??= makeDetectors(base);
@@ -19,7 +19,7 @@ self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?
     }
     if (!frame || !detectors) return;
     const d = await detectors;
-    const found = detectObjects(d, frame, frame.width, frame.height, probe, zoom, zoomSmall);
+    const found = detectObjects(d, frame, frame.width, frame.height, probe, zoom, zoomSmall, phones);
     frame.close();
     self.postMessage({ id, found });
   } catch (err) {

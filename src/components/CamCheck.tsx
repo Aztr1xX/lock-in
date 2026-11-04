@@ -103,8 +103,8 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
         ["You", dbg.present ? "At your desk" : "Not in view. After 10 seconds this pauses the timer.", dbg.present ? "ok" : "warn"],
         ["Face", dbg.faceVisible ? "Facing the screen" : dbg.lookingDown ? "Looking down. That's fine, it still counts." : dbg.present ? "Not visible. Fine as long as your shoulders are." : "Not visible", dbg.faceVisible || dbg.present ? "ok" : "off"],
         ["Eyes", !dbg.faceVisible ? "Only checked when you face the screen" : dbg.eyesClosed ? "Closed" : dbg.yawning ? "Yawning" : "Open", dbg.eyesClosed || dbg.yawning ? "warn" : dbg.faceVisible ? "ok" : "off"],
-        ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.slumps.length ? `${slumpText(dbg.slumps)[0].toUpperCase() + slumpText(dbg.slumps).slice(1)}. Nudges if it lasts 3 minutes.` : dbg.posture === "good" || dbg.posture === "hunched" ? "Good" : "Needs your shoulders in view", dbg.slumps.length ? "warn" : dbg.posture === "good" ? "ok" : "off"],
-        ["Phone", phones.length || dbg.phoneSure > 0
+        dbg.posture === "off" ? ["Posture", "Not checking. Turned off in Settings.", "off"] : ["Posture", dbg.posture === "calibrating" ? "Learning how you normally sit…" : dbg.slumps.length ? `${slumpText(dbg.slumps)[0].toUpperCase() + slumpText(dbg.slumps).slice(1)}. Nudges if it lasts 3 minutes.` : dbg.posture === "good" || dbg.posture === "hunched" ? "Good" : "Needs your shoulders in view", dbg.slumps.length ? "warn" : dbg.posture === "good" ? "ok" : "off"],
+        !settings.cam.phone ? ["Phone", "Not checking. Turned off in Settings.", "off"] : ["Phone", phones.length || dbg.phoneSure > 0
           ? `${phones.length ? phones[0].why[0].toUpperCase() + phones[0].why.slice(1) : "Not seen right now"}. ${Math.round(dbg.phoneSure * 100)}% sure you're on it. It only nudges at 100%, after about 8 steady seconds.`
           : "None in your hand", dbg.alert === "phone" ? "warn" : "ok"],
       ]
@@ -165,7 +165,7 @@ export default function CamCheck({ cam: sessionCam, settings, onClose, onToggleS
           </dl>
         )}
 
-        {on && (
+        {on && settings.cam.posture && (
           <div className="cc-posture">
             <button className="ghost-btn" onClick={markPosture} disabled={setPose === "busy"}>
               {setPose === "busy" ? "Hold still…" : "This is how I sit"}

@@ -48,7 +48,7 @@ export interface CamDebug {
   phoneHits: number;
   /** How sure it is that you're on your phone right now, 0..1. It warns at 1. */
   phoneSure: number;
-  posture: "calibrating" | "good" | "hunched" | "unknown";
+  posture: "calibrating" | "good" | "hunched" | "unknown" | "off";
   /** Which ways you're slumped right now, if any. */
   slumps: Slump[];
   /** What the camera border should flash: red for phone, orange for posture. */
@@ -151,18 +151,18 @@ class ObjectFinder {
     });
   }
 
-  async find(v: HTMLVideoElement): Promise<Found | null> {
+  async find(v: HTMLVideoElement, phones = true): Promise<Found | null> {
     if (this.busy) return null;
     this.busy = true;
     try {
-      if (this.local) return detectObjects(this.local, v, v.videoWidth, v.videoHeight, this.probe, this.zoom, this.zoomSmall);
+      if (this.local) return detectObjects(this.local, v, v.videoWidth, v.videoHeight, this.probe, this.zoom, this.zoomSmall, phones);
       if (!this.worker) return null;
       const frame = await createImageBitmap(v);
       const id = ++this.n;
       return await new Promise<Found | null>((res) => {
         this.waiting.set(id, res);
         setTimeout(() => { if (this.waiting.delete(id)) res(null); }, 5_000);
-        this.worker!.postMessage({ id, frame }, [frame]);
+        this.worker!.postMessage({ id, frame, phones }, [frame]);
       });
     } catch {
       return null;
@@ -326,6 +326,13 @@ export class FocusCamera {
   }
 
   setFeatures(f: CamFeatures) {
+    // Turning a check off stops it straight away, and forgets anything it was building up.
+    if (!f.phone) {
+      this.phoneLog = [];
+      this.phoneHits = 0;
+      this.lastPhoneBox = null;
+    }
+    if (!f.posture) this.slouchSince = 0;
     this.features = f;
   }
 
@@ -509,7 +516,7 @@ export class FocusCamera {
     // ---- person and phone, checked about every second (in the background)
     if (this.tickN % 2 === 0 && !getFinder().busy) {
       const body: Body = { wrists, shoulders: shoulderW };
-      void getFinder().find(v).then((f) => f && this.stream && this.onObjects(f, body, Date.now()));
+      void getFinder().find(v, this.features.phone).then((f) => f && this.stream && this.onObjects(f, body, Date.now()));
     }
     const personSeen = now - this.personAt < PERSON_KEEP;
     if (personSeen) present = true;
@@ -526,8 +533,8 @@ export class FocusCamera {
       lookingDown: !!faceBox && !faceVisible,
       phoneHits: this.phoneHits,
       phoneSure: this.phoneSure(),
-      posture: !raw ? "unknown" : !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
-      slumps: this.base && raw && sample ? slumps(sample, this.base) : [],
+      posture: !this.features.posture ? "off" : !raw ? "unknown" : !this.base ? (this.calibStart ? "calibrating" : "unknown") : this.slouchSince ? "hunched" : "good",
+      slumps: this.features.posture && this.base && raw && sample ? slumps(sample, this.base) : [],
       alert: this.phoneHits >= 4 && this.phoneSure() >= 0.6 ? "phone" : this.slouchSince && now - this.slouchSince >= POSTURE_FLASH ? "posture" : null,
     };
 
@@ -583,12 +590,12 @@ export class FocusCamera {
     }
 
     // phone
-    if (this.phoneSure() >= 1 && now - this.lastPhoneNudge > this.k.phoneCool) {
+    if (this.features.phone && this.phoneSure() >= 1 && now - this.lastPhoneNudge > this.k.phoneCool) {
       this.lastPhoneNudge = now;
       this.phoneHits = 0;
       this.phoneLog = [];
       this.counts.phone++;
-      if (this.features.phone) this.onEvent("phone");
+      this.onEvent("phone");
     }
 
     // posture: compared with how you normally sit (see posture.ts), and only a slump
@@ -633,6 +640,10 @@ export class FocusCamera {
   }
 
   private postureTick(raw: Sample | null, sample: Sample | null, now: number) {
+    if (!this.features.posture) {
+      this.slouchSince = 0;
+      return;
+    }
     // Your normal from earlier sessions works straight away. This session still takes a
     // quiet look at how you sit, which keeps it up to date if you've moved the camera.
     // Switch cameras and it picks up that camera's normal (or learns one).
@@ -670,7 +681,7 @@ export class FocusCamera {
         this.lastPosture = now;
         this.slouchSince = 0;
         this.counts.posture++;
-        if (this.features.posture) this.onEvent("posture");
+        this.onEvent("posture");
       }
     } else this.slouchSince = 0;
   }
@@ -687,6 +698,7 @@ export class FocusCamera {
         }
         continue;
       }
+      if (!this.features.phone) continue;
       const tracked = !!last && o.label === "cell phone" && iou(o, last) > 0.3;
       objects.push({ ...box, label: o.label, score: o.score, ...judgePhone(o, body, found.hands, tracked ? TRACK_SCORE : undefined) });
     }
