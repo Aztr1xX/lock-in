@@ -1,11 +1,12 @@
 // Runs object and hand detection off the main thread, so the timer and animations
 // never stutter while it works.
 
-import { type Detectors, detectObjects, makeDetectors } from "./objects";
+import { type Detectors, ZOOM, detectObjects, makeDetectors } from "./objects";
 
 let detectors: Promise<Detectors> | null = null;
 const probe = new OffscreenCanvas(320, 240);
-const zoom = new OffscreenCanvas(320, 320);
+const zoom = new OffscreenCanvas(ZOOM, ZOOM);
+const zoomSmall = new OffscreenCanvas(320, 320);
 
 self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?: string }>) => {
   const { id, frame, base } = e.data;
@@ -18,7 +19,7 @@ self.onmessage = async (e: MessageEvent<{ id: number; frame?: ImageBitmap; base?
     }
     if (!frame || !detectors) return;
     const d = await detectors;
-    const found = detectObjects(d, frame, frame.width, frame.height, probe, zoom);
+    const found = detectObjects(d, frame, frame.width, frame.height, probe, zoom, zoomSmall);
     frame.close();
     self.postMessage({ id, found });
   } catch (err) {
