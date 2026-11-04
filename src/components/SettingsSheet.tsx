@@ -154,8 +154,8 @@ export default function SettingsSheet({ settings: s, update, onClose }: Props) {
               {([
                 ["timelapse", "Time-lapse", "A photo every 10 seconds, played back as a short video"],
                 ["away", "Pause when I leave", "Stops the timer if you're gone for 10 seconds, restarts when you're back"],
-                ["phone", "Phone nudge", "A gentle nudge if you pick up your phone"],
-                ["posture", "Posture reminder", "Only after a few minutes of hunching. Looking down at your iPad is fine"],
+                ["phone", "Check for my phone", "A gentle nudge if you pick up your phone. Off means it stops looking for phones."],
+                ["posture", "Check my posture", "A reminder after a few minutes of hunching. Looking down at your iPad is fine"],
                 ["drowsy", "Tired alert", "Suggests a break if you keep yawning or your eyes keep closing"],
               ] as const).map(([k, title, sub]) => (
                 <label className="toggle-row" key={k}>

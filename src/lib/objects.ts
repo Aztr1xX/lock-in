@@ -99,7 +99,8 @@ function lookClosely(det: ObjectDetector, src: Source, W: number, H: number, zoo
   return out;
 }
 
-export function detectObjects(d: Detectors, src: Source, W: number, H: number, probe: Canvas2D, zoom: Canvas2D, zoomSmall?: Canvas2D): Found {
+/** With phones off it only looks for you: no close-ups, no hands, much less work. */
+export function detectObjects(d: Detectors, src: Source, W: number, H: number, probe: Canvas2D, zoom: Canvas2D, zoomSmall?: Canvas2D, phones = true): Found {
   const pg = probe.getContext("2d", { willReadFrequently: true }) as Ctx2D | null;
   const PW = probe.width, PH = probe.height;
   pg?.drawImage(src, 0, 0, PW, PH);
@@ -142,6 +143,7 @@ export function detectObjects(d: Detectors, src: Source, W: number, H: number, p
     found.push({ x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H, label: c.categoryName, score: c.score, crop: false });
   }
   const person = found.filter((o) => o.label === "person").sort((a, b) => b.score - a.score)[0];
+  if (!phones) return { objects: person ? [{ ...person, dark: 0, light: 0, long: 0, sharp: 1, onYou: true }] : [], hands: [] };
   // Inside the You box (a little slack for a phone held out in front). With no You box
   // (out of view, or only your hands showing) everything counts, as before.
   const PAD = 0.04;
