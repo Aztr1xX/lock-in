@@ -301,7 +301,7 @@ fn trim(mut v: Value) -> Value {
 }
 
 /// A 320 px wide JPEG of the frame, base64, for the preview. Made in memory only.
-fn jpeg(f: &Frame) -> Option<String> {
+pub fn jpeg(f: &Frame) -> Option<String> {
     use base64::Engine;
     let img = image::RgbImage::from_raw(f.width, f.height, f.rgb.clone())?;
     let w = 320u32.min(f.width);

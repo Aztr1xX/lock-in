@@ -9,6 +9,7 @@
   import { buildRows, closedExes, type AppRow, type InstalledApp } from "./lib/apps";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
   import CameraBench from "./lib/CameraBench.svelte";
+  import LiveCamera from "./lib/LiveCamera.svelte";
 
   type Mark = "pass" | "fail" | "";
   const inTauri = "__TAURI_INTERNALS__" in window;
@@ -28,6 +29,7 @@
   let stats = $state<CamStats | null>(null);
   let test: CamTest | null = null;
   let benchSummary = $state("");
+  let liveSummary = $state("");
 
   function savedCamera(): string {
     try {
@@ -221,6 +223,13 @@
     { id: "bench-saw", group: "Camera speed test", text: "\"What it saw\" found a person (you) for each detector" },
     { id: "bench-smooth", group: "Camera speed test", text: "The app stayed responsive while it ran" },
     { id: "bench-sandbox", group: "Camera speed test", text: "It said it ran in its sandbox" },
+    { id: "live-picker", group: "Live camera check", text: "The camera picker showed a moving picture of you, marked \"Sees you\"" },
+    { id: "live-broadcast", group: "Live camera check", text: "NVIDIA Broadcast never showed its crossed-out camera" },
+    { id: "live-hour", group: "Live camera check", text: "Left minimised for an hour, \"Minimised\" reached 60 min with no long gap" },
+    { id: "live-away", group: "Live camera check", text: "Walking away for 20 s showed Away, and sitting down showed Here again within a few seconds" },
+    { id: "live-ipad", group: "Live camera check", text: "Reading your iPad for 5 minutes never showed Away or Phone" },
+    { id: "live-phone", group: "Live camera check", text: "Holding your phone showed \"In your hand\" within about 5 s (this model isn't trained for it yet, so misses are expected)" },
+    { id: "live-cover", group: "Live camera check", text: "Covering the camera said it looks covered, not Away" },
     { id: "cam-open", group: "Camera", text: "The camera opened with no permission prompt" },
     { id: "cam-run", group: "Camera", text: "Ran for a minute with \"person\" right most of the time" },
     { id: "cam-phone", group: "Camera", text: "Holding up your phone raises the phone score" },
@@ -259,6 +268,7 @@
   function summary() {
     const lines = [`Lock In test build ${about.app}, WebView2 ${about.webview}`];
     if (benchSummary) lines.push(benchSummary);
+    if (liveSummary) lines.push(liveSummary);
     if (stats)
       lines.push(
         `Camera: ${stats.frames} frames, ${stats.avgMs.toFixed(0)} ms avg, ${stats.maxMs.toFixed(0)} ms max, pose on ${stats.poseDelegate}${stats.error ? `, error ${stats.error}` : ""}`,
@@ -313,8 +323,8 @@
   {/if}
   <header>
     <p class="eyebrow">Test build {about.app}</p>
-    <h1>Is the new camera engine fast enough?</h1>
-    <p class="lede">Step 1 of the camera plan. Run the speed test, tap the checks at the bottom, then copy your results into the chat.</p>
+    <h1>The new camera engine</h1>
+    <p class="lede">Steps 1 and 2 of the camera plan. Run the speed test, then leave the live check running while you study. Tap the checks at the bottom and copy your results into the chat.</p>
   </header>
 
   <section>
@@ -331,6 +341,17 @@
   <section>
     <div class="head">
       <span class="num">2</span>
+      <div>
+        <h2>Live camera check</h2>
+        <p>The new engine running for real: here or away, phone in hand, someone else in the room, and whether the camera is working. It keeps going with this window minimised or closed to the tray. Nothing is saved; the picture only ever exists in memory.</p>
+      </div>
+    </div>
+    <LiveCamera bind:text={liveSummary} />
+  </section>
+
+  <section>
+    <div class="head">
+      <span class="num">3</span>
       <div>
         <h2>Today's camera check</h2>
         <p>The current models, running inside the app window, for comparison. Opens your camera and checks twice a second.</p>
@@ -373,7 +394,7 @@
 
   <section>
     <div class="head">
-      <span class="num">3</span>
+      <span class="num">4</span>
       <div>
         <h2>Site blocking</h2>
         <p>Installs Lock In Guard, then blocks the sites below in every browser for a few minutes. YouTube stays open for studying.</p>
@@ -423,7 +444,7 @@
 
   <section>
     <div class="head">
-      <span class="num">4</span>
+      <span class="num">5</span>
       <div>
         <h2>Closing apps</h2>
         <p>Games, game launchers and anything else you pick stay closed for the whole round. Open one and it closes again within a few seconds.</p>
@@ -431,12 +452,12 @@
     </div>
     {#if guard}
       <AppList bind:rows={appRows} {installed} locked={guard.blocking} loading={appsLoading} needGuard={appsNeedGuard} onlookagain={lookAgain} />
-    {:else}<p>Install the Guard in step 2 first.</p>{/if}
+    {:else}<p>Install the Guard in step 4 first.</p>{/if}
   </section>
 
   <section class="results">
     <h2>Your results</h2>
-    {#each ["Camera speed test", "Camera", "Blocking", "Study YouTube", "Apps"] as g}
+    {#each ["Camera speed test", "Live camera check", "Camera", "Blocking", "Study YouTube", "Apps"] as g}
       <h3>{g}</h3>
       <ul class="checks">
         {#each checks.filter((c) => c.group === g) as c}
