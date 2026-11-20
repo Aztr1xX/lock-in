@@ -67,6 +67,9 @@ pub struct Video {
     pub length: String,
     pub category: String,
     pub allowed: bool,
+    /// Why the category couldn't be read, if it couldn't.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub problem: String,
 }
 
 fn text(v: &Value) -> String {
@@ -122,10 +125,26 @@ pub fn parse_results(html: &str) -> Vec<Video> {
     out
 }
 
+/// YouTube's own category names; the watch page has other "category" keys that aren't these.
+const CATEGORIES: &[&str] = &[
+    "Film & Animation", "Autos & Vehicles", "Music", "Pets & Animals", "Sports", "Travel & Events", "Gaming",
+    "People & Blogs", "Comedy", "Entertainment", "News & Politics", "Howto & Style", "Education",
+    "Science & Technology", "Nonprofits & Activism",
+];
+
 pub fn parse_category(html: &str) -> String {
-    let Some(i) = html.find("\"category\":\"") else { return String::new() };
-    let rest = &html[i + 12..];
-    rest[..rest.find('"').unwrap_or(0)].replace("\\u0026", "&")
+    let key = "\"category\":\"";
+    let mut from = 0;
+    while let Some(i) = html[from..].find(key) {
+        let start = from + i + key.len();
+        let rest = &html[start..];
+        let value = rest[..rest.find('"').unwrap_or(0)].replace("\\u0026", "&");
+        if CATEGORIES.contains(&value.as_str()) {
+            return value;
+        }
+        from = start;
+    }
+    String::new()
 }
 
 fn encode(q: &str) -> String {
@@ -156,11 +175,18 @@ pub fn search(q: &str, allow_channels: &[String]) -> Result<(String, Vec<Video>)
         .iter()
         .map(|v| {
             let id = v.id.clone();
-            std::thread::spawn(move || crate::web::get("www.youtube.com", &format!("/watch?v={id}")).map(|h| parse_category(&h)).unwrap_or_default())
+            std::thread::spawn(move || match crate::web::get("www.youtube.com", &format!("/watch?v={id}")) {
+                Ok(h) => {
+                    let c = parse_category(&h);
+                    let problem = if c.is_empty() { format!("no category in {} bytes", h.len()) } else { String::new() };
+                    (c, problem)
+                }
+                Err(e) => (String::new(), e),
+            })
         })
         .collect();
     for (v, h) in videos.iter_mut().zip(handles) {
-        v.category = h.join().unwrap_or_default();
+        (v.category, v.problem) = h.join().unwrap_or_default();
         v.allowed = ALLOWED.contains(&v.category.as_str()) || allow_channels.contains(&v.channel_id);
     }
     Ok((verdict.into(), videos))

@@ -74,7 +74,7 @@ Step "study YouTube search"
 $y = Guard @{ cmd = "yt_search"; q = "organic chemistry alkenes" }
 $allowed = @($y.results | Where-Object { $_.allowed })
 Write-Host "      study search: ok=$($y.ok) verdict=$($y.verdict) results=$(@($y.results).Count) allowed=$($allowed.Count) error=$($y.error)"
-if ($y.results) { $y.results | Select-Object -First 4 | ForEach-Object { Write-Host "        $($_.category) | $($_.title)" } }
+if ($y.results) { $y.results | Select-Object -First 4 | ForEach-Object { Write-Host "        $($_.category) | $($_.title) $($_.problem)" } }
 Check ($y.ok -and @($y.results).Count -ge 3 -and $allowed.Count -ge 1) "study YouTube search works during a YouTube block"
 $hasChrome = Test-Path $chrome
 if ($hasChrome) {
