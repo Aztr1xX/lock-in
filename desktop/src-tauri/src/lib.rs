@@ -4,6 +4,9 @@
 //!   1. The camera and MediaPipe work inside the app's WebView2 window, without a prompt every time.
 //!   2. Lock In Guard can block sites in every browser.
 //!   3. Lock In Guard can close games.
+//!
+//! Camera plan step 1 adds the camera speed test, run by the separate camera worker
+//! (`lockin-camera.exe`, see ../camera), which has no network code.
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
@@ -43,6 +46,90 @@ async fn guard_setup(action: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || elevated::run(&guard, &action))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Only one speed test at a time: it uses every core it can get.
+static BENCH_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Runs the camera speed test in the camera worker. The frame (PNG bytes) arrives in memory and
+/// is handed to the worker through a pipe, so it never touches the disk. Progress is sent to the
+/// window as "camera-bench" events; the result comes back as the reply.
+#[tauri::command]
+async fn camera_bench(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    use std::sync::atomic::Ordering;
+    let frame = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        _ => return Err("The speed test needs a camera picture.".into()),
+    };
+    drop(request);
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let worker = exe.with_file_name(if cfg!(windows) { "lockin-camera.exe" } else { "lockin-camera" });
+    let models = app.path().resource_dir().map_err(|e| e.to_string())?.join("models");
+    if !worker.exists() || !models.join("manifest.json").exists() {
+        return Err("The camera models aren't installed. Reinstall Lock In from the latest release.".into());
+    }
+    if BENCH_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("A speed test is already running.".into());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || camera_worker::bench(&app, &worker, &models, frame))
+        .await
+        .map_err(|e| e.to_string());
+    BENCH_RUNNING.store(false, Ordering::SeqCst);
+    result?
+}
+
+mod camera_worker {
+    use serde_json::Value;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use tauri::Emitter;
+
+    pub fn bench(app: &tauri::AppHandle, worker: &Path, models: &Path, frame: Vec<u8>) -> Result<Value, String> {
+        let mut cmd = Command::new(worker);
+        cmd.arg("bench").arg("--models").arg(models).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("Couldn't start the camera worker: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("no pipe to the camera worker")?;
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&frame);
+        });
+        let mut stderr = child.stderr.take().ok_or("no error pipe")?;
+        let errs = std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = stderr.read_to_string(&mut s);
+            s
+        });
+        let mut result: Option<Value> = None;
+        let mut error: Option<String> = None;
+        let stdout = child.stdout.take().ok_or("no output pipe")?;
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            match v["type"].as_str() {
+                Some("progress") => {
+                    let _ = app.emit("camera-bench", &v);
+                }
+                Some("result") => result = Some(v),
+                Some("error") => error = v["message"].as_str().map(str::to_string),
+                _ => {}
+            }
+        }
+        let status = child.wait().map_err(|e| e.to_string())?;
+        let stderr = errs.join().unwrap_or_default();
+        match (result, error) {
+            (Some(r), _) => Ok(r),
+            (None, Some(e)) => Err(e),
+            (None, None) => {
+                let tail: String = stderr.lines().rev().take(3).collect::<Vec<_>>().join(" / ");
+                Err(format!("The camera worker stopped ({status}){}", if tail.is_empty() { String::new() } else { format!(": {tail}") }))
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -144,7 +231,7 @@ pub fn run() {
             PermissionKind::Microphone => PermissionResponse::Deny,
             _ => PermissionResponse::Default,
         })
-        .invoke_handler(tauri::generate_handler![guard, guard_setup, about, bring_forward])
+        .invoke_handler(tauri::generate_handler![guard, guard_setup, about, bring_forward, camera_bench])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Open Lock In", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

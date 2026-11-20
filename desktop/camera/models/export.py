@@ -106,7 +106,9 @@ def rfdetr():
         path = Path(m.export(output_dir=str(TMP / f"rfdetr{size}"), shape=(size, size), verbose=False))
         if path.is_dir():
             path = next(path.glob("*.onnx"))
-        add(f"rfdetr-n-{size}", path, "rfdetr", size, "RF-DETR Nano", "Apache-2.0")
+        # Each size carries its own 108 MB copy of the weights, so only 384 ships in the app;
+        # 320 is timed in CI to see what a smaller hands crop would save.
+        add(f"rfdetr-n-{size}", path, "rfdetr", size, "RF-DETR Nano", "Apache-2.0", **({} if size == 384 else {"timing_only": True}))
 
     found = m.predict(BUS, threshold=0.3)
     reference["rfdetr-n-384"] = dets(
@@ -211,7 +213,8 @@ def rtmpose():
 
 # A full check is the whole frame, a closer look at the hands, and the pose model on the person box.
 checks = [
-    dict(name="RF-DETR Nano", frame="rfdetr-n-384", hands="rfdetr-n-320", pose="rtmpose-s"),
+    dict(name="RF-DETR Nano", frame="rfdetr-n-384", hands="rfdetr-n-384", pose="rtmpose-s"),
+    dict(name="RF-DETR Nano, 320 px hands", frame="rfdetr-n-384", hands="rfdetr-n-320", pose="rtmpose-s"),
     dict(name="RF-DETR Nano, 8-bit", frame="rfdetr-n-384-int8", hands="rfdetr-n-384-int8", pose="rtmpose-s"),
     dict(name="D-FINE Nano", frame="dfine-n-416", hands="dfine-n-320", pose="rtmpose-s"),
     dict(name="YOLO26n", frame="yolo26n-416", hands="yolo26n-320", pose="rtmpose-s"),

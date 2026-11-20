@@ -36,12 +36,18 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/lockin-guard"
+      "binaries/lockin-guard",
+      "binaries/lockin-camera"
     ],
     "resources": {
       "../guard/windivert/WinDivert.dll": "WinDivert.dll",
       "../guard/windivert/WinDivert64.sys": "WinDivert64.sys",
-      "../guard/windivert/LICENSE.txt": "WinDivert-LICENSE.txt"
+      "../guard/windivert/LICENSE.txt": "WinDivert-LICENSE.txt",
+      "camera/onnxruntime.dll": "onnxruntime.dll",
+      "camera/DirectML.dll": "DirectML.dll",
+      "camera/ORT-LICENSE.txt": "ONNXRuntime-LICENSE.txt",
+      "camera/ORT-ThirdPartyNotices.txt": "ONNXRuntime-ThirdPartyNotices.txt",
+      "camera/models/*": "models/"
     },
     "windows": {
       "nsis": {

@@ -49,6 +49,19 @@ jobs:
         working-directory: desktop
         shell: pwsh
         run: Copy-Item target/release/lockin-guard.exe src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe
+      - name: Camera models and ONNX Runtime (from the camera-models-1 pre-release)
+        working-directory: desktop
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/camera-assets.ps1
+      - name: Build the camera worker
+        working-directory: desktop
+        run: cargo build -p lockin-camera --release
+      - name: Bundle the camera worker with the app
+        working-directory: desktop
+        shell: pwsh
+        run: Copy-Item target/release/lockin-camera.exe src-tauri/binaries/lockin-camera-x86_64-pc-windows-msvc.exe
       - name: Install packages
         working-directory: desktop
         run: npm ci

@@ -6,6 +6,10 @@ This folder is phase 0: a test build that proves the risky parts on a real PC.
 - `src/` the app's screens (Svelte 5 + TypeScript)
 - `src-tauri/` the app's core (Tauri 2, Rust): tray, window, talks to the Guard
 - `guard/` Lock In Guard, a small Windows service that blocks sites through the hosts file and closes games
+- `camera/` the camera worker (`lockin-camera.exe`): runs the camera models with ONNX Runtime on frames it
+  is handed and reports numbers only. No network code (CI checks its dependencies). `camera/models/export.py`
+  makes the ONNX models in CI and publishes them, with ONNX Runtime's DirectML build, as the
+  `camera-models-1` pre-release; `scripts/camera-assets.ps1` fetches them for builds into `src-tauri/camera/`
 - `scripts/smoke.ps1` installs the Guard, blocks a site, closes Notepad and removes it again (runs in CI)
 
 GitHub Actions builds the installer on every push that touches this folder

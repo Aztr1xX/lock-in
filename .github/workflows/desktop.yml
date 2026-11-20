@@ -2,7 +2,7 @@ name: Desktop app
 
 on:
   push:
-    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "!desktop/camera/models/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 jobs:
@@ -36,6 +36,34 @@ jobs:
       - name: Bundle the Guard with the app
         shell: pwsh
         run: Copy-Item target/release/lockin-guard.exe src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe
+
+      - name: Camera models and ONNX Runtime (from the camera-models-1 pre-release)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/camera-assets.ps1
+      - name: Camera worker unit tests
+        run: cargo test -p lockin-camera
+      - name: Camera worker has no networking code
+        shell: pwsh
+        run: ./scripts/check-camera-deps.ps1
+      - name: Build the camera worker
+        run: cargo build -p lockin-camera --release
+      - name: Camera speed test on GitHub's Windows machine (no graphics chip)
+        shell: pwsh
+        timeout-minutes: 20
+        run: |
+          ./target/release/lockin-camera.exe bench --models camera-assets --image camera-assets/bus.jpg --reference camera-assets/reference.json --ort camera-assets/onnxruntime.dll --engines cpu1,cpu,gpu | Tee-Object -FilePath bench.jsonl
+          node scripts/bench-summary.mjs bench.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-speed-test
+          path: desktop/bench.jsonl
+          if-no-files-found: ignore
+      - name: Bundle the camera worker with the app
+        shell: pwsh
+        run: Copy-Item target/release/lockin-camera.exe src-tauri/binaries/lockin-camera-x86_64-pc-windows-msvc.exe
 
       - run: npm ci
       - name: Build the installer

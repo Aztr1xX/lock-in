@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "guard"]
+members = ["src-tauri", "guard", "camera"]
 
 [profile.release]
 codegen-units = 1
@@ -8,3 +8,10 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# The camera worker resizes pictures in tight loops, so it is built for speed, not size.
+[profile.release.package.lockin-camera]
+opt-level = 3
+
+[profile.release.package.image]
+opt-level = 3

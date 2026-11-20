@@ -8,6 +8,7 @@
   import CaughtCard from "./lib/CaughtCard.svelte";
   import { buildRows, closedExes, type AppRow, type InstalledApp } from "./lib/apps";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
+  import CameraBench from "./lib/CameraBench.svelte";
 
   type Mark = "pass" | "fail" | "";
   const inTauri = "__TAURI_INTERNALS__" in window;
@@ -19,13 +20,14 @@
   const checkUpdates = () => checkAndDownload((s) => (upd = s));
 
   // ---------- camera ----------
-  let video: HTMLVideoElement;
+  let video = $state<HTMLVideoElement>();
   let cams = $state<MediaDeviceInfo[]>([]);
   let camId = $state(savedCamera());
   let camState = $state<"idle" | "loading" | "running" | "error">("idle");
   let camError = $state("");
   let stats = $state<CamStats | null>(null);
   let test: CamTest | null = null;
+  let benchSummary = $state("");
 
   function savedCamera(): string {
     try {
@@ -70,6 +72,7 @@
     camError = "";
     try {
       if (!cams.length || !cams[0].label) await loadCameras();
+      if (!video) throw new Error("The camera preview isn't ready yet.");
       await openCamera(video, camId);
       test = new CamTest(video, (s) => (stats = s));
       await test.start();
@@ -214,6 +217,9 @@
 
   // ---------- your results ----------
   const checks = [
+    { id: "bench-run", group: "Camera speed test", text: "The speed test finished without an error" },
+    { id: "bench-saw", group: "Camera speed test", text: "\"What it saw\" found a person (you) for each detector" },
+    { id: "bench-smooth", group: "Camera speed test", text: "The app stayed responsive while it ran" },
     { id: "cam-open", group: "Camera", text: "The camera opened with no permission prompt" },
     { id: "cam-run", group: "Camera", text: "Ran for a minute with \"person\" right most of the time" },
     { id: "cam-phone", group: "Camera", text: "Holding up your phone raises the phone score" },
@@ -251,6 +257,7 @@
 
   function summary() {
     const lines = [`Lock In test build ${about.app}, WebView2 ${about.webview}`];
+    if (benchSummary) lines.push(benchSummary);
     if (stats)
       lines.push(
         `Camera: ${stats.frames} frames, ${stats.avgMs.toFixed(0)} ms avg, ${stats.maxMs.toFixed(0)} ms max, pose on ${stats.poseDelegate}${stats.error ? `, error ${stats.error}` : ""}`,
@@ -304,17 +311,28 @@
     </div>
   {/if}
   <header>
-    <p class="eyebrow">Phase 0 test build {about.app}</p>
-    <h1>Three things to prove before we build</h1>
-    <p class="lede">Work down the page, tap each check to mark it pass or fail, then copy your results into the chat.</p>
+    <p class="eyebrow">Test build {about.app}</p>
+    <h1>Is the new camera engine fast enough?</h1>
+    <p class="lede">Step 1 of the camera plan. Run the speed test, tap the checks at the bottom, then copy your results into the chat.</p>
   </header>
 
   <section>
     <div class="head">
       <span class="num">1</span>
       <div>
-        <h2>Camera</h2>
-        <p>Opens your camera inside the app and runs the phone and person models twice a second.</p>
+        <h2>Camera speed test</h2>
+        <p>Times the new phone and posture models on your PC, on the CPU and on the graphics chip. They run in a separate background program with no internet access, and the picture never leaves memory.</p>
+      </div>
+    </div>
+    <CameraBench {camId} live={camState === "running" ? video : null} bind:text={benchSummary} />
+  </section>
+
+  <section>
+    <div class="head">
+      <span class="num">2</span>
+      <div>
+        <h2>Today's camera check</h2>
+        <p>The current models, running inside the app window, for comparison. Opens your camera and checks twice a second.</p>
       </div>
     </div>
 
@@ -354,7 +372,7 @@
 
   <section>
     <div class="head">
-      <span class="num">2</span>
+      <span class="num">3</span>
       <div>
         <h2>Site blocking</h2>
         <p>Installs Lock In Guard, then blocks the sites below in every browser for a few minutes. YouTube stays open for studying.</p>
@@ -404,7 +422,7 @@
 
   <section>
     <div class="head">
-      <span class="num">3</span>
+      <span class="num">4</span>
       <div>
         <h2>Closing apps</h2>
         <p>Games, game launchers and anything else you pick stay closed for the whole round. Open one and it closes again within a few seconds.</p>
@@ -417,7 +435,7 @@
 
   <section class="results">
     <h2>Your results</h2>
-    {#each ["Camera", "Blocking", "Study YouTube", "Apps"] as g}
+    {#each ["Camera speed test", "Camera", "Blocking", "Study YouTube", "Apps"] as g}
       <h3>{g}</h3>
       <ul class="checks">
         {#each checks.filter((c) => c.group === g) as c}
