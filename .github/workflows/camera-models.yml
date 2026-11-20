@@ -1,0 +1,72 @@
+name: Camera models
+
+# Exports the candidate camera models to ONNX (desktop/camera/models/export.py), checks each one
+# against its official pipeline, and publishes them with ONNX Runtime's DirectML build as the
+# "camera-models-1" pre-release. The app builds download them from there, so the models are fixed
+# files with known checksums, not something fetched on anyone's PC.
+#
+# The pre-release is never marked "latest", so the app's updater (which reads the latest
+# release) never sees it.
+
+on:
+  push:
+    paths: ["desktop/camera/models/**", ".github/workflows/camera-models.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  MODELS_TAG: camera-models-1
+  ORT_VERSION: 1.24.4
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the export tools (CPU-only PyTorch)
+        run: |
+          pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install "rfdetr[onnx]" ultralytics onnx onnxslim onnxruntime rtmlib pillow
+
+      - name: Export and check the models
+        run: python desktop/camera/models/export.py out
+
+      - name: Add ONNX Runtime ${{ env.ORT_VERSION }} with DirectML (Microsoft's official build)
+        run: |
+          pip download onnxruntime-directml==$ORT_VERSION --no-deps --only-binary :all: --platform win_amd64 --python-version 3.12 -d wheel
+          unzip -j wheel/*.whl onnxruntime/capi/onnxruntime.dll onnxruntime/capi/DirectML.dll onnxruntime/LICENSE onnxruntime/ThirdPartyNotices.txt -d ort
+          mv ort/onnxruntime.dll ort/DirectML.dll out/
+          mv ort/LICENSE out/ORT-LICENSE.txt
+          mv ort/ThirdPartyNotices.txt out/ORT-ThirdPartyNotices.txt
+          ls -la out
+          {
+            echo "### Camera models"
+            echo
+            echo "| File | MB |"
+            echo "|---|---|"
+            for f in out/*; do echo "| $(basename $f) | $(( $(stat -c %s $f) / 1000000 )) |"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: camera-models
+          path: out/
+
+      - name: Publish as the ${{ env.MODELS_TAG }} pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$MODELS_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$MODELS_TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$MODELS_TAG" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false --title "Camera models (not an app release)" \
+              --notes "Files the Lock In desktop build bundles for the camera: candidate detection models in ONNX format and ONNX Runtime with DirectML. Made by .github/workflows/camera-models.yml. Nothing here needs downloading by hand."
+          fi
