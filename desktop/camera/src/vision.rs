@@ -257,6 +257,9 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
             // End-to-end head: up to 300 rows of x1, y1, x2, y2, score, class in input pixels.
             let Some(o) = outs.first() else { return found };
             let cols = *o.shape.last().unwrap();
+            if cols != 6 {
+                return found; // not the NMS-free head this decoder reads
+            }
             for row in o.data.chunks_exact(cols) {
                 if row[4] >= min_score {
                     if let Some(cls) = class_name(m.family, row[5] as usize, coco80) {

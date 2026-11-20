@@ -2088,6 +2088,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 name = "lock-in"
 version = "0.0.1"
 dependencies = [
+ "lockin-sandbox",
  "serde",
  "serde_json",
  "tauri",
@@ -2144,6 +2145,14 @@ dependencies = [
  "windows-service",
  "windows-sys 0.61.2",
  "winreg",
+]
+
+[[package]]
+name = "lockin-sandbox"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "windows 0.62.2",
 ]
 
 [[package]]

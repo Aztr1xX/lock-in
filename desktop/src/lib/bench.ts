@@ -44,6 +44,8 @@ export interface BenchResult {
   runs: number;
   models: ModelResult[];
   checks: { name: string; engines: Partial<Record<EngineKey, { ms: number; cpu_ms: number }>> }[];
+  /** Whether the worker ran in its Windows sandbox (no network, camera or personal files). */
+  sandbox?: { on: boolean; error?: string };
 }
 
 export interface Progress {
@@ -111,6 +113,7 @@ const ms = (o: Outcome | undefined) => (isTiming(o) ? `${o.ms.toFixed(1)} ms` : 
 export function benchText(r: BenchResult, fromCamera: boolean): string {
   const lines = [`Camera speed test on ${r.machine.cpu} (${r.machine.threads} threads). Graphics: ${r.machine.gpus.join(", ") || "none listed"}.`];
   lines.push(fromCamera ? `Picture: your camera, ${r.frame.width}x${r.frame.height}.` : "Picture: none from the camera, timed on a grey frame.");
+  lines.push(r.sandbox?.on ? "Sandbox: on (no network, camera or file access)." : `Sandbox: OFF${r.sandbox?.error ? ` (${r.sandbox.error})` : ""}.`);
   lines.push("Full check (frame + hands + posture), median:");
   for (const c of r.checks) {
     const parts = ENGINES.filter((e) => c.engines[e.key]).map((e) => `${e.name.toLowerCase()} ${c.engines[e.key]!.ms} ms`);

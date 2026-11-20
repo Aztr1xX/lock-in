@@ -220,6 +220,7 @@
     { id: "bench-run", group: "Camera speed test", text: "The speed test finished without an error" },
     { id: "bench-saw", group: "Camera speed test", text: "\"What it saw\" found a person (you) for each detector" },
     { id: "bench-smooth", group: "Camera speed test", text: "The app stayed responsive while it ran" },
+    { id: "bench-sandbox", group: "Camera speed test", text: "It said it ran in its sandbox" },
     { id: "cam-open", group: "Camera", text: "The camera opened with no permission prompt" },
     { id: "cam-run", group: "Camera", text: "Ran for a minute with \"person\" right most of the time" },
     { id: "cam-phone", group: "Camera", text: "Holding up your phone raises the phone score" },

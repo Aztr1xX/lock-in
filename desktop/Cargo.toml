@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "guard", "camera", "capture"]
+members = ["src-tauri", "guard", "camera", "capture", "sandbox"]
 
 [profile.release]
 codegen-units = 1

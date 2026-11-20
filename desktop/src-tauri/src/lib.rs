@@ -79,27 +79,56 @@ async fn camera_bench(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -
 }
 
 mod camera_worker {
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::path::Path;
     use std::process::{Command, Stdio};
     use tauri::Emitter;
 
-    pub fn bench(app: &tauri::AppHandle, worker: &Path, models: &Path, frame: Vec<u8>) -> Result<Value, String> {
-        let mut cmd = Command::new(worker);
-        cmd.arg("bench").arg("--models").arg(models).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
+    type Pipes = (Box<dyn Write + Send>, Box<dyn Read + Send>, Box<dyn Read + Send>);
+
+    /// Starts the worker inside its sandbox (no network, camera or personal files). If Windows
+    /// refuses the sandbox, it runs as a normal background process instead, which still has no
+    /// network code, and the result says so.
+    fn start(worker: &Path, models: &Path) -> Result<(Pipes, Box<dyn FnOnce() -> String + Send>, Value), String> {
+        let models_arg = models.to_string_lossy().to_string();
+        let dir = worker.parent().unwrap_or(Path::new("."));
+        match lockin_sandbox::spawn(worker, &["bench", "--models", &models_arg], dir) {
+            Ok(mut child) => {
+                let pipes: Pipes = (
+                    Box::new(child.stdin.take().ok_or("no pipe")?),
+                    Box::new(child.stdout.take().ok_or("no pipe")?),
+                    Box::new(child.stderr.take().ok_or("no pipe")?),
+                );
+                let wait = Box::new(move || child.wait().map(|c| format!("exit code {c}")).unwrap_or_else(|e| e));
+                Ok((pipes, wait, json!({ "on": true })))
+            }
+            Err(why) => {
+                let mut cmd = Command::new(worker);
+                cmd.arg("bench").arg("--models").arg(models).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                let mut child = cmd.spawn().map_err(|e| format!("Couldn't start the camera worker: {e}"))?;
+                let pipes: Pipes = (
+                    Box::new(child.stdin.take().ok_or("no pipe")?),
+                    Box::new(child.stdout.take().ok_or("no pipe")?),
+                    Box::new(child.stderr.take().ok_or("no pipe")?),
+                );
+                let wait = Box::new(move || child.wait().map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()));
+                Ok((pipes, wait, json!({ "on": false, "error": why })))
+            }
         }
-        let mut child = cmd.spawn().map_err(|e| format!("Couldn't start the camera worker: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no pipe to the camera worker")?;
+    }
+
+    pub fn bench(app: &tauri::AppHandle, worker: &Path, models: &Path, frame: Vec<u8>) -> Result<Value, String> {
+        let ((mut stdin, stdout, mut stderr), wait, sandbox) = start(worker, models)?;
         std::thread::spawn(move || {
             let _ = stdin.write_all(&frame);
         });
-        let mut stderr = child.stderr.take().ok_or("no error pipe")?;
         let errs = std::thread::spawn(move || {
             let mut s = String::new();
             let _ = stderr.read_to_string(&mut s);
@@ -107,7 +136,6 @@ mod camera_worker {
         });
         let mut result: Option<Value> = None;
         let mut error: Option<String> = None;
-        let stdout = child.stdout.take().ok_or("no output pipe")?;
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
             match v["type"].as_str() {
@@ -119,10 +147,13 @@ mod camera_worker {
                 _ => {}
             }
         }
-        let status = child.wait().map_err(|e| e.to_string())?;
+        let status = wait();
         let stderr = errs.join().unwrap_or_default();
         match (result, error) {
-            (Some(r), _) => Ok(r),
+            (Some(mut r), _) => {
+                r["sandbox"] = sandbox;
+                Ok(r)
+            }
             (None, Some(e)) => Err(e),
             (None, None) => {
                 let tail: String = stderr.lines().rev().take(3).collect::<Vec<_>>().join(" / ");

@@ -85,6 +85,11 @@
         <p class="msg">The graphics chip couldn't run the models, so they'd use the CPU. ({gpuError})</p>
       {/if}
       {#if !fromCamera}<p class="msg">The camera didn't open, so this ran on a plain grey picture. The speeds still count.</p>{/if}
+      {#if result.sandbox?.on}
+        <p class="msg">Ran in its sandbox: Windows blocked it from the internet, the camera and your files.</p>
+      {:else if result.sandbox}
+        <p class="err">The sandbox didn't start, so it ran as a normal background program (it still has no internet code). {result.sandbox.error}</p>
+      {/if}
     </div>
 
     <h3>Full check: whole frame, a closer look at your hands, and posture</h3>
