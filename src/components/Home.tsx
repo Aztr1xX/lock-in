@@ -10,6 +10,7 @@ import Ring from "./Ring";
 import type { Helpers } from "../lib/bridge";
 import Plant from "./Plant";
 import GardenPlant from "./GardenPlant";
+import Shrubert, { useShrubMood } from "./Shrubert";
 import SkyLayer from "./Sky";
 import SeedJar, { jarFill } from "./SeedJar";
 import { Sprite } from "./Visitors";
@@ -100,6 +101,7 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
   const [poke, setPoke] = useState(0);
   const [poke2, setPoke2] = useState(0);
   const sky = useMemo(() => skyAt(new Date(now)), [now]);
+  const shrub = useShrubMood(sky.night);
   useEffect(() => {
     const id = setInterval(() => setLineN((n) => n + 1), 9000);
     return () => clearInterval(id);
@@ -305,6 +307,9 @@ export default function Home({ settings, sessions, now, onStart, onStats, garden
             {sky.stars > 0.4 && [0, 1, 2, 3, 4].map((i) => (
               <span key={i} className="gs-firefly" style={{ left: `${12 + i * 19}%`, top: `${38 + ((i * 37) % 30)}%`, animationDelay: `${i * 0.7}s` }}><Sprite id="firefly" size={12} /></span>
             ))}
+            <button className="gs-shrub" onClick={() => (sky.night ? undefined : shrub.react("hum"))} aria-label="Shrubert" title={sky.night ? "Shrubert is asleep" : "Shrubert"}>
+              <Shrubert shrub={garden.shrub} mood={shrub.mood} flash={shrub.flash} size={62} />
+            </button>
             <span className="gs-time">{sky.name}</span>
             <button className="gs-jar" onClick={onGarden} title={jar.next ? `${jar.next.seeds - garden.seeds} more seeds until ${lower(jar.next.name)}` : "Every seed unlocked"}>
               <SeedJar seeds={garden.seeds} size={18} />

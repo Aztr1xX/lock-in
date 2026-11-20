@@ -169,6 +169,11 @@ export const chime = {
     [N.E6, N.G6, N.C7, N.G6, N.C7].forEach((f, i) => bell(f, i * 0.06, 0.9, 0.06, (i % 2 ? 0.4 : -0.4)));
     bell(N.C6, 0.32, 1.6, 0.08);
   },
+  /** Shrubert hums a tiny tune: soft, low and a bit wobbly. */
+  hum: () => {
+    [N.E4, N.G4, N.A4, N.G4, N.E4].forEach((f, i) => bell(f, i * 0.16, 0.5, 0.05, -0.1));
+    pad([N.C4], 0, 0.95, 0.018);
+  },
   /** Soft UI tap. */
   tick: () => tap(0, 700, 0.08),
 };
