@@ -36,7 +36,7 @@ jobs:
 
       - run: npm ci
       - name: Build the installer
-        run: npx tauri build
+        run: npx tauri build --config src-tauri/tauri.ci.conf.json
       - uses: actions/upload-artifact@v4
         with:
           name: lock-in-test-build
