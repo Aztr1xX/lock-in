@@ -37,12 +37,19 @@ Check ($LASTEXITCODE -eq 0) "firewall rule is in place"
 $doh = [System.Net.Dns]::GetHostAddresses("dns.google") | ForEach-Object { $_.ToString() }
 Check (($doh | Where-Object { $_ -ne "127.0.0.1" -and $_ -ne "::1" }).Count -eq 0) "secure DNS server name is blocked ($($doh -join ', '))"
 $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-if (Test-Path $chrome) {
+function ChromeDom($url) {
+  # chrome.exe is a GUI program, so its output has to be redirected to a file to be read.
+  $out = Join-Path $env:TEMP "lockin-dom.txt"
+  Remove-Item $out -ErrorAction SilentlyContinue
+  Start-Process $chrome -ArgumentList "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=$env:TEMP\lockin-chrome", "--dump-dom", $url -RedirectStandardOutput $out -Wait -WindowStyle Hidden
+  return (Get-Content $out -Raw -ErrorAction SilentlyContinue) + ""
+}
+$hasChrome = Test-Path $chrome
+if ($hasChrome) {
   # en.wikipedia.org isn't in the hosts file, so only the browser policy can stop it.
   Start-Sleep -Seconds 3
-  $dom = & $chrome --headless=new --disable-gpu --no-first-run --user-data-dir="$env:TEMP\lockin-chrome" --dump-dom https://en.wikipedia.org/ 2>$null | Out-String
-  Write-Host ("      chrome said: " + ($dom -replace "\s+"," ").Substring(0, [Math]::Min(160, $dom.Length)))
-  Check ($dom -match "BLOCKED_BY_ADMINISTRATOR") "Chrome blocks a subdomain through the policy"
+  $domBlocked = ChromeDom "https://en.wikipedia.org/"
+  Write-Host "      chrome during the block: $($domBlocked.Length) chars"
 }
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check ($hosts -match "127\.0\.0\.1 example\.com") "hosts file has the Lock In section"
@@ -77,6 +84,12 @@ Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist")) "C
 Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist")) "Edge policy removed"
 netsh advfirewall firewall show rule name=LockInFocusRound | Out-Null
 Check ($LASTEXITCODE -ne 0) "firewall rule removed"
+if ($hasChrome) {
+  Start-Sleep -Seconds 3
+  $domFree = ChromeDom "https://en.wikipedia.org/"
+  Write-Host "      chrome after the block: $($domFree.Length) chars"
+  Check (($domFree -match "Wikipedia") -and -not ($domBlocked -match "Wikipedia")) "Chrome blocked a subdomain through the policy, and let it through afterwards"
+}
 
 & $guard uninstall
 Check ($LASTEXITCODE -eq 0) "uninstall"
