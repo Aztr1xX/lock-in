@@ -4,3 +4,4 @@ target
 # Camera models and ONNX Runtime: downloaded by scripts/camera-assets.ps1 in CI
 camera-assets
 src-tauri/camera
+__pycache__
