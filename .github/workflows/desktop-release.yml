@@ -1,6 +1,6 @@
 name: Desktop release
 
-# Push a tag like desktop-v0.1.0 to ship an update. This builds a signed installer and
+# To ship an update, change the number in desktop/release-version.txt and push. This builds a signed installer and
 # publishes it, with latest.json, as a release of this repo. Every installed copy of
 # Lock In checks that file and updates itself.
 #
@@ -9,7 +9,8 @@ name: Desktop release
 
 on:
   push:
-    tags: ["desktop-v*"]
+    paths: ["desktop/release-version.txt"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -33,7 +34,7 @@ jobs:
         id: v
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".Substring("desktop-v".Length)
+          $v = (Get-Content desktop/release-version.txt -Raw).Trim()
           "version=$v" >> $env:GITHUB_OUTPUT
           $conf = Get-Content desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           $conf.version = $v
@@ -60,7 +61,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           projectPath: desktop
-          tagName: v${{ steps.v.outputs.version }}
+          tagName: desktop-v${{ steps.v.outputs.version }}
+          commitish: ${{ github.sha }}
           releaseName: Lock In ${{ steps.v.outputs.version }} (in development)
           releaseBody: "In development: an early test build, password protected. Download the setup file below and run it; installed copies update themselves."
           releaseDraft: false
