@@ -6,12 +6,16 @@
 //! Usage:
 //!   lockin-camera bench --models DIR [--runs N] [--engines cpu1,cpu,gpu,gpu-low]
 //!                       [--image FILE] [--reference FILE] [--ort FILE]
+//!     Speed test. Without --image, the picture (PNG or JPEG bytes) is read from stdin, so a
+//!     camera frame never has to be written to disk.
+//!   lockin-camera run --models DIR --check NAME [--gpu] [--ort FILE]
+//!     Live mode: raw frames in on stdin, what the models saw out on stdout (see run.rs).
 //!
-//! Without --image, the picture (PNG or JPEG bytes) is read from stdin, so a camera frame never
-//! has to be written to disk. Progress and the result are JSON, one object per line, on stdout.
+//! Output is JSON, one object per line, on stdout.
 
 mod bench;
 mod machine;
+mod run;
 mod runtime;
 mod vision;
 
@@ -36,7 +40,18 @@ fn main() {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     match args.first().map(String::as_str) {
         Some("bench") => {}
-        _ => fail("usage: lockin-camera bench --models DIR [--runs N] [--engines LIST] [--image FILE] [--reference FILE] [--ort FILE]"),
+        Some("run") => {
+            let dir = flag("--models").map(PathBuf::from).unwrap_or_else(|| runtime::beside_exe("models"));
+            let check = flag("--check").unwrap_or_else(|| fail("--check NAME is required"));
+            let ort = flag("--ort").map(PathBuf::from);
+            let (mut models, _env) = run::Models::open(&dir, &check, args.iter().any(|a| a == "--gpu"), ort.as_deref()).unwrap_or_else(|e| fail(e));
+            emit(json!({ "type": "ready", "check": check, "engine": models.engine.key() }));
+            if let Err(e) = run::serve(&mut models, &mut emit) {
+                fail(e);
+            }
+            return;
+        }
+        _ => fail("usage: lockin-camera bench --models DIR ... | run --models DIR --check NAME [--gpu]"),
     }
 
     let models_dir = flag("--models").map(PathBuf::from).unwrap_or_else(|| runtime::beside_exe("models"));
