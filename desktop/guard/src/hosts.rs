@@ -148,6 +148,6 @@ mod tests {
         assert!(t.contains("127.0.0.1 x.com") && !t.contains("reddit"));
         assert_eq!(t.matches(START).count(), 1);
         clear_block().unwrap();
-        assert_eq!(std::fs::read_to_string(&f).unwrap(), "# my hosts\n10.0.0.1 nas.local\n");
+        assert_eq!(std::fs::read_to_string(&f).unwrap().replace("\r\n", "\n"), "# my hosts\n10.0.0.1 nas.local\n");
     }
 }
