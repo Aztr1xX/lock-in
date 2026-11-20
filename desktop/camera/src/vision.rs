@@ -22,6 +22,9 @@ pub struct ModelInfo {
     pub sha256: String,
     #[serde(default)]
     pub cpu_only: bool,
+    /// Timed in CI but not shipped in the app.
+    #[serde(default)]
+    pub timing_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

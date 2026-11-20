@@ -54,6 +54,8 @@ pub struct ModelResult {
     pub width: u32,
     pub height: u32,
     pub mb: f64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub timing_only: bool,
     /// Median time to prepare the picture for this model, milliseconds.
     pub prep_ms: f64,
     pub engines: HashMap<&'static str, Outcome>,
@@ -264,6 +266,7 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
             width: m.width,
             height: m.height,
             mb: (m.bytes as f64 / 1e6 * 10.0).round() / 10.0,
+            timing_only: m.timing_only,
             prep_ms: r2(median(&mut preps)),
             engines: HashMap::new(),
             found: Vec::new(),

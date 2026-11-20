@@ -26,15 +26,18 @@ out.push("");
 out.push(`| Model | Input | MB | ${engines.map(([, n]) => n).join(" | ")} | Matches official pipeline |`);
 out.push(`|---|---|---|${engines.map(() => "---").join("|")}|---|`);
 const failures = [];
+// Models that are only timed (not shipped) are reported but don't fail the build.
+const warnings = [];
 for (const m of r.models) {
+  const list = m.timing_only ? warnings : failures;
   let ref = "not compared";
   if (m.reference) {
     if ("matched" in m.reference) {
       ref = `${m.reference.matched} of ${m.reference.total}`;
-      if (m.reference.matched < m.reference.total || m.reference.total === 0) failures.push(`${m.id} missed ${JSON.stringify(m.reference.missed)}`);
+      if (m.reference.matched < m.reference.total || m.reference.total === 0) list.push(`${m.id} missed ${JSON.stringify(m.reference.missed)}`);
     } else {
       ref = m.reference.ok ? `yes (worst point ${(m.reference.worst_share_of_height * 100).toFixed(1)}% of height)` : "NO";
-      if (!m.reference.ok) failures.push(`${m.id} keypoints off by ${(m.reference.worst_share_of_height * 100).toFixed(1)}% of height`);
+      if (!m.reference.ok) list.push(`${m.id} keypoints off by ${(m.reference.worst_share_of_height * 100).toFixed(1)}% of height`);
     }
   }
   out.push(`| ${m.label} | ${m.width}x${m.height} | ${m.mb} | ${engines.map(([k]) => cell(m.engines[k])).join(" | ")} | ${ref} |`);
@@ -55,6 +58,7 @@ out.push("What each detector found: " + people.join("; "));
 const md = out.join("\n") + "\n";
 console.log(md);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+if (warnings.length) console.warn(`Answers differ from the official pipelines for models that aren't shipped:\n  ${warnings.join("\n  ")}`);
 if (failures.length) {
   console.error(`Answers differ from the official pipelines:\n  ${failures.join("\n  ")}`);
   process.exit(1);

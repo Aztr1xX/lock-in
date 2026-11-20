@@ -10,6 +10,12 @@ This folder is phase 0: a test build that proves the risky parts on a real PC.
   is handed and reports numbers only. No network code (CI checks its dependencies). `camera/models/export.py`
   makes the ONNX models in CI and publishes them, with ONNX Runtime's DirectML build, as the
   `camera-models-1` pre-release; `scripts/camera-assets.ps1` fetches them for builds into `src-tauri/camera/`
+- `capture/` reads the camera with Windows Media Foundation in the app's own process (not the window, which
+  Windows slows down when minimised), keeping only the newest frame
+- `sandbox/` starts the camera worker in a Windows AppContainer with no capabilities: no network, camera or
+  personal files (CI proves both with `sandbox-check`)
+- `live/` the live camera check: hands frames to the sandboxed worker and turns its answers into here/away,
+  phone, interruption and camera-health states (the rules are in `live/src/rules.rs`, with tests)
 - `scripts/smoke.ps1` installs the Guard, blocks a site, closes Notepad and removes it again (runs in CI)
 
 GitHub Actions builds the installer on every push that touches this folder

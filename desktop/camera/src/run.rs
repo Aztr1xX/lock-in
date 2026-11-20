@@ -38,7 +38,9 @@ impl Models {
         let manifest: Manifest = serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         let c = manifest.checks.iter().find(|c| c.name == check).ok_or_else(|| format!("no check named {check}"))?;
         let env = runtime::load(ort_path)?;
-        let engines: &[Engine] = if prefer_gpu { &[Engine::Gpu, Engine::Cpu] } else { &[Engine::Cpu] };
+        // On the CPU, one thread: the small detectors barely get faster with more (CI: 30 ms on one
+        // core against 21 ms on four) but use more CPU time in total, and studying comes first.
+        let engines: &[Engine] = if prefer_gpu { &[Engine::Gpu, Engine::Cpu1] } else { &[Engine::Cpu1] };
         let mut last_err = String::new();
         for &engine in engines {
             let open = |id: &str| -> Result<(ModelInfo, ort::session::Session), String> {
