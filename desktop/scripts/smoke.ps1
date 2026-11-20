@@ -1,0 +1,55 @@
+# Smoke test for Lock In Guard on a Windows machine with admin rights (GitHub's runners have it).
+# Installs the service, blocks a site, checks Windows now resolves it to the Guard, checks the
+# Guard saw the attempt, closes Notepad through it, then removes everything.
+$ErrorActionPreference = "Stop"
+$guard = Resolve-Path "target/release/lockin-guard.exe"
+
+function Guard($obj) {
+  $c = [System.Net.Sockets.TcpClient]::new("127.0.0.1", 47822)
+  $s = $c.GetStream()
+  $w = [IO.StreamWriter]::new($s); $w.AutoFlush = $true
+  $w.WriteLine(($obj | ConvertTo-Json -Compress))
+  $line = [IO.StreamReader]::new($s).ReadLine()
+  $c.Close()
+  return $line | ConvertFrom-Json
+}
+function Check($ok, $what) {
+  if ($ok) { Write-Host "PASS  $what" } else { Write-Host "FAIL  $what"; $script:failed = $true }
+}
+$failed = $false
+
+& $guard install
+if ($LASTEXITCODE -ne 0) { throw "install failed" }
+Start-Sleep -Seconds 2
+$st = Guard @{ cmd = "status" }
+Check ($st.ok) "service answers (version $($st.version), sinkhole: $($st.sinkhole -join ' '))"
+
+$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org"); minutes = 0.5 }
+Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.hosts -join ', '))"
+$hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
+Check ($hosts -match "127\.0\.0\.1 example\.com") "hosts file has the Lock In section"
+$ips = [System.Net.Dns]::GetHostAddresses("example.com") | ForEach-Object { $_.ToString() }
+Check (($ips | Where-Object { $_ -ne "127.0.0.1" -and $_ -ne "::1" }).Count -eq 0) "example.com now resolves to the Guard ($($ips -join ', '))"
+
+curl.exe -s --max-time 5 https://example.com/ | Out-Null
+curl.exe -s --max-time 5 http://example.org/ -o page.html
+Check ((Get-Content page.html -Raw) -match "Locked in") "plain http shows the Locked in page"
+$st = Guard @{ cmd = "status" }
+$seen = $st.attempts | ForEach-Object { $_.host }
+Check ($seen -contains "example.com") "HTTPS attempt was seen through SNI ($($seen -join ', '))"
+
+$np = Start-Process notepad -PassThru
+Start-Sleep -Seconds 2
+$k = Guard @{ cmd = "kill"; names = @("notepad.exe") }
+Start-Sleep -Seconds 1
+Check ($k.killed.Count -ge 1 -and $np.HasExited) "Notepad closed through the Guard"
+
+Write-Host "Waiting for the 30 s block to end on its own..."
+Start-Sleep -Seconds 34
+$hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
+Check (-not ($hosts -match "Lock In")) "block ended on time and the hosts file is clean"
+
+& $guard uninstall
+Check ($LASTEXITCODE -eq 0) "uninstall"
+Get-Content "$env:ProgramData\LockIn\guard.log" -ErrorAction SilentlyContinue | Select-Object -Last 15
+if ($failed) { exit 1 }

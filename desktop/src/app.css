@@ -1,0 +1,82 @@
+/* Test build styling. Plain on purpose: the real look comes from the style tile. */
+:root {
+  --paper: #f3ead8;
+  --card: #fbf6ec;
+  --ink: #2c3a2a;
+  --muted: #6b705f;
+  --line: #ddd2bb;
+  --moss: #4f6b3a;
+  --clay: #b5653c;
+  --berry: #9c3b4f;
+  color-scheme: light;
+  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b211a;
+    --card: #232b22;
+    --ink: #ece4d2;
+    --muted: #a9a693;
+    --line: #36402f;
+    --moss: #9cbb7a;
+    --clay: #e09a6f;
+    --berry: #e18396;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); }
+main { max-width: 860px; margin: 0 auto; padding: 40px 24px 64px; }
+h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.2; }
+h1 { font-size: 28px; }
+h2 { font-size: 19px; }
+h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); }
+p { margin: 6px 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--moss); }
+.lede { color: var(--muted); }
+header { margin-bottom: 28px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px; margin-bottom: 18px; }
+.head { display: flex; gap: 14px; margin-bottom: 16px; }
+.head p { color: var(--muted); }
+.num { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--moss); color: var(--card); font-weight: 600; }
+button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 9px 16px; background: var(--moss); color: var(--card); cursor: pointer; transition: transform 120ms, opacity 120ms; }
+button:active { transform: scale(0.97); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+button.small { padding: 4px 10px; font-size: 13px; }
+button.link { background: none; color: var(--muted); padding: 8px 0; font-weight: 400; text-decoration: underline; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+input { flex: 1; min-width: 0; }
+textarea { width: 100%; margin: 12px 0; resize: vertical; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.cam { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 760px) { .cam { grid-template-columns: 1fr; } }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden; background: #111; }
+video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.veil { position: absolute; inset: 0; display: grid; place-items: center; color: #ddd; }
+.side { display: grid; gap: 12px; align-content: start; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-variant-numeric: tabular-nums; }
+dt { color: var(--muted); }
+dd { margin: 0; font-weight: 600; }
+dd.yes { color: var(--moss); }
+dd.warn { color: var(--berry); }
+.ok { color: var(--moss); font-weight: 600; }
+.err { color: var(--berry); }
+.msg { color: var(--muted); font-size: 14px; }
+.live { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--clay); margin: 10px 0; }
+.live strong { color: var(--clay); font-variant-numeric: tabular-nums; }
+.live span { color: var(--muted); flex: 1; }
+ul { list-style: none; padding: 0; margin: 0; }
+.attempts li, .games li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.attempts li span:last-child { color: var(--muted); font-size: 13px; }
+.checks li { margin: 2px 0; }
+.check { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; background: none; color: var(--ink); font-weight: 400; padding: 6px 4px; }
+.check .box { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.check.pass .box { background: var(--moss); border-color: var(--moss); }
+.check.pass .box::after { content: "\2713"; color: var(--card); }
+.check.fail .box { background: var(--berry); border-color: var(--berry); }
+.check.fail .box::after { content: "\2715"; color: var(--card); }
+footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 24px; }

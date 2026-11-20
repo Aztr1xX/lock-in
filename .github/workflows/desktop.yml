@@ -1,0 +1,44 @@
+name: Desktop app
+
+on:
+  push:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Guard unit tests
+        run: cargo test -p lockin-guard
+      - name: Build the Guard
+        run: cargo build -p lockin-guard --release
+      - name: Guard smoke test (install, block, close a program, uninstall)
+        shell: pwsh
+        run: ./scripts/smoke.ps1
+      - name: Bundle the Guard with the app
+        shell: pwsh
+        run: Copy-Item target/release/lockin-guard.exe src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe
+
+      - run: npm ci
+      - name: Build the installer
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lock-in-test-build
+          path: desktop/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
