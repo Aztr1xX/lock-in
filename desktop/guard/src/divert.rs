@@ -282,7 +282,12 @@ pub fn start(sites: Vec<String>) -> bool {
             return false;
         };
         // Only outgoing HTTPS packets that carry data, and never our own loopback sinkhole.
-        let filter = b"outbound and !loopback and tcp.DstPort == 443 and tcp.PayloadLength > 0\0";
+        // The Guard's own connections (study YouTube search) come from a reserved port range.
+        let filter = format!(
+            "outbound and !loopback and tcp.DstPort == 443 and tcp.PayloadLength > 0 and (tcp.SrcPort < {} or tcp.SrcPort > {})\0",
+            crate::web::OWN_PORTS.0,
+            crate::web::OWN_PORTS.1
+        );
         let h = unsafe { (api.open)(filter.as_ptr(), 0, 0, 0) };
         if h.is_null() || h as isize == -1 {
             log(&format!("WinDivert could not start (error {})", std::io::Error::last_os_error()));

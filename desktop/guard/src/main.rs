@@ -19,6 +19,8 @@ mod divert;
 mod hosts;
 mod page;
 mod sni;
+mod web;
+mod yt;
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -275,6 +277,11 @@ enum Req {
     Unblock,
     Kill { names: Vec<String> },
     Games,
+    YtSearch {
+        q: String,
+        #[serde(default, rename = "allowChannels")]
+        allow_channels: Vec<String>,
+    },
 }
 
 fn handle(req: Req) -> serde_json::Value {
@@ -306,6 +313,10 @@ fn handle(req: Req) -> serde_json::Value {
         }
         Req::Kill { names } => json!({ "ok": true, "killed": kill_by_name(&names) }),
         Req::Games => json!({ "ok": true, "games": running_games() }),
+        Req::YtSearch { q, allow_channels } => match yt::search(&q, &allow_channels) {
+            Ok((verdict, results)) => json!({ "ok": true, "verdict": verdict, "results": results }),
+            Err(e) => json!({ "ok": false, "error": e }),
+        },
     }
 }
 

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { CHECK_EVERY_MS, checkAndDownload, installNow, type UpdateState } from "./lib/updates";
+  import StudyTube from "./lib/StudyTube.svelte";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
 
   type Mark = "pass" | "fail" | "";
@@ -170,8 +171,11 @@
     { id: "attempts", group: "Blocking", text: "Your attempts showed up in the list" },
     { id: "defender", group: "Blocking", text: "Windows Security stayed quiet" },
     { id: "unblock", group: "Blocking", text: "Sites came back on their own when time ran out" },
+    { id: "page", group: "Blocking", text: "A blocked site showed the \"This can wait\" page" },
     { id: "kill", group: "Games", text: "Notepad closed from the button" },
     { id: "game", group: "Games", text: "A real game showed in the list and closed" },
+    { id: "yt-search", group: "Study YouTube", text: "A study search showed videos, and a fun search was refused" },
+    { id: "yt-play", group: "Study YouTube", text: "A video played here while YouTube was blocked" },
   ];
   let marks = $state<Record<string, Mark>>({});
   let note = $state("");
@@ -360,9 +364,20 @@
     {:else}<p>Install the Guard in step 2 first.</p>{/if}
   </section>
 
+  <section>
+    <div class="head">
+      <span class="num">4</span>
+      <div>
+        <h2>Study YouTube</h2>
+        <p>Search and watch videos that teach you something, right here. Fun searches and the feed don't exist.</p>
+      </div>
+    </div>
+    <StudyTube guardReady={!!guard} />
+  </section>
+
   <section class="results">
     <h2>Your results</h2>
-    {#each ["Camera", "Blocking", "Games"] as g}
+    {#each ["Camera", "Blocking", "Games", "Study YouTube"] as g}
       <h3>{g}</h3>
       <ul class="checks">
         {#each checks.filter((c) => c.group === g) as c}

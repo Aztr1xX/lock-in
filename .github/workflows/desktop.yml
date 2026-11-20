@@ -29,9 +29,10 @@ jobs:
         run: cargo build -p lockin-guard --release
       - name: Guard smoke test (install, block, close a program, uninstall)
         shell: pwsh
+        timeout-minutes: 12
         run: |
           Copy-Item guard/windivert/WinDivert.dll, guard/windivert/WinDivert64.sys target/release/
-          ./scripts/smoke.ps1
+          try { ./scripts/smoke.ps1 } finally { Get-Content "$env:ProgramData\LockIn\guard.log" -ErrorAction SilentlyContinue | Select-Object -Last 30 }
       - name: Bundle the Guard with the app
         shell: pwsh
         run: Copy-Item target/release/lockin-guard.exe src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe

@@ -6,6 +6,7 @@ $guard = Resolve-Path "target/release/lockin-guard.exe"
 
 function Guard($obj) {
   $c = [System.Net.Sockets.TcpClient]::new("127.0.0.1", 47822)
+  $c.ReceiveTimeout = 45000
   $s = $c.GetStream()
   $w = [IO.StreamWriter]::new($s); $w.AutoFlush = $true
   $w.WriteLine(($obj | ConvertTo-Json -Compress))
@@ -13,6 +14,7 @@ function Guard($obj) {
   $c.Close()
   return $line | ConvertFrom-Json
 }
+function Step($what) { Write-Host "....  $what" }
 function Check($ok, $what) {
   if ($ok) { Write-Host "PASS  $what" } else { Write-Host "FAIL  $what"; $script:failed = $true }
 }
@@ -24,7 +26,9 @@ Start-Sleep -Seconds 2
 $st = Guard @{ cmd = "status" }
 Check ($st.ok) "service answers (version $($st.version), sinkhole: $($st.sinkhole -join ' '))"
 
-$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org"); minutes = 1.5 }
+$y = Guard @{ cmd = "yt_search"; q = "minecraft hardcore" }
+Check ($y.ok -and $y.verdict -eq "fun" -and @($y.results).Count -eq 0) "study YouTube refuses a fun search"
+$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org", "youtube.com"); minutes = 1.5 }
 Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.hosts -join ', '))"
 $st = Guard @{ cmd = "status" }
 Check ($st.hostsOk) "hosts section still in place"
@@ -35,7 +39,9 @@ Check ($doh.DnsOverHttpsMode -eq "off") "Chrome secure DNS is off for the round"
 $ca = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Lock In focus round*" }
 Check (@($ca).Count -eq 1) "the round certificate is trusted ($(@($ca).Count) found)"
 # curl on Windows checks certificates against Windows' trusted list, like Chrome, Edge and Opera.
-$pg = curl.exe -s --max-time 8 https://www.example.com/ | Out-String
+# (--ssl-no-revoke: browsers carry on when a certificate has no revocation list; curl would not.)
+Step "fetching a blocked HTTPS site"
+$pg = curl.exe -s --ssl-no-revoke --max-time 8 https://www.example.com/ | Out-String
 Check ($pg -match "This can wait") "an HTTPS blocked site shows the Lock In page with a valid certificate"
 $rule = netsh advfirewall firewall show rule name=LockInFocusRound
 Check ($LASTEXITCODE -eq 0) "firewall rule is in place"
@@ -46,7 +52,11 @@ function ChromeDom($url) {
   # chrome.exe is a GUI program, so its output has to be redirected to a file to be read.
   $out = Join-Path $env:TEMP "lockin-dom.txt"
   Remove-Item $out -ErrorAction SilentlyContinue
-  Start-Process $chrome -ArgumentList "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=$env:TEMP\lockin-chrome", "--dump-dom", $url -RedirectStandardOutput $out -Wait -WindowStyle Hidden
+  $p = Start-Process $chrome -ArgumentList "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=$env:TEMP\lockin-chrome", "--dump-dom", $url -RedirectStandardOutput $out -PassThru -WindowStyle Hidden
+  if (-not $p.WaitForExit(40000)) {
+    Write-Host "      (chrome took too long; stopping it)"
+    Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
+  }
   return (Get-Content $out -Raw -ErrorAction SilentlyContinue) + ""
 }
 Check ($st.layers -contains "Names") "name layer (WinDivert) is on"
@@ -59,12 +69,21 @@ curl.exe -s --max-time 8 https://en.wikipedia.org/ -o wiki.html
 Check ($LASTEXITCODE -ne 0) "a subdomain not in the hosts file is stopped by name (curl exit $LASTEXITCODE)"
 curl.exe -s --max-time 8 -o NUL https://www.iana.org/
 Check ($LASTEXITCODE -eq 0) "other sites still load during the block"
+# Study YouTube has to keep working while youtube.com is blocked for everything else.
+Step "study YouTube search"
+$y = Guard @{ cmd = "yt_search"; q = "organic chemistry alkenes" }
+$allowed = @($y.results | Where-Object { $_.allowed })
+Write-Host "      study search: ok=$($y.ok) verdict=$($y.verdict) results=$(@($y.results).Count) allowed=$($allowed.Count) error=$($y.error)"
+if ($y.results) { $y.results | Select-Object -First 4 | ForEach-Object { Write-Host "        $($_.category) | $($_.title)" } }
+Check ($y.ok -and @($y.results).Count -ge 3 -and $allowed.Count -ge 1) "study YouTube search works during a YouTube block"
 $hasChrome = Test-Path $chrome
 if ($hasChrome) {
   # en.wikipedia.org isn't in the hosts file, so only the browser policy can stop it.
   Start-Sleep -Seconds 3
+  Step "chrome: blocked subdomain"
   $domBlocked = ChromeDom "https://en.wikipedia.org/"
   Write-Host "      chrome during the block: $($domBlocked.Length) chars"
+  Step "chrome: blocked site page"
   $domPage = ChromeDom "https://www.example.org/"
   Check ($domPage -match "This can wait") "Chrome shows the Lock In page for a blocked site"
 }

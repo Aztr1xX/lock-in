@@ -21,7 +21,8 @@ const GUARD_ADDR: &str = "127.0.0.1:47822";
 fn guard(req: Value) -> Result<Value, String> {
     let addr: SocketAddr = GUARD_ADDR.parse().unwrap();
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(800)).map_err(|_| "not running".to_string())?;
-    s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    // Study YouTube searches load several pages, so allow them time.
+    s.set_read_timeout(Some(Duration::from_secs(30))).ok();
     writeln!(s, "{req}").map_err(|e| e.to_string())?;
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).map_err(|e| e.to_string())?;
