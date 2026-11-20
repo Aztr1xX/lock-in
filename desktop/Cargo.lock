@@ -2121,6 +2121,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockin-capture"
+version = "0.0.1"
+dependencies = [
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "lockin-guard"
 version = "0.0.1"
 dependencies = [
