@@ -4,7 +4,7 @@
   // working while youtube.com is blocked everywhere else.
   import { invoke } from "@tauri-apps/api/core";
 
-  type Video = { id: string; title: string; channel: string; channelId: string; length: string; category: string; allowed: boolean };
+  type Video = { id: string; title: string; channel: string; channelId: string; length: string; category: string; allowed: boolean; basis?: string };
   type Reply = { ok: boolean; verdict?: "study" | "fun" | "unsure"; results?: Video[]; error?: string };
 
   let { guardReady }: { guardReady: boolean } = $props();
@@ -93,7 +93,7 @@
 {#if !guardReady}
   <p class="msg">Install Lock In Guard in step 2 first. It does the searching, so this keeps working while YouTube is blocked.</p>
 {:else if phase === "idle"}
-  <p class="msg">Search for a topic. Videos filed under Education or Science &amp; Technology play here. There's no feed and nothing plays next on its own.</p>
+  <p class="msg">Search for a topic. Videos filed under Education or Science &amp; Technology play here, and so do ones whose title is clearly about a topic. There's no feed and nothing plays next on its own.</p>
 {:else if phase === "loading"}
   <p class="msg">Searching YouTube and checking what each video is filed under...</p>
 {:else if phase === "fun"}
@@ -147,7 +147,7 @@
           <li>
             <span class="meta">
               <span class="title">{v.title}</span>
-              <span class="sub">{v.channel} · filed under {v.category || "an unknown category"}</span>
+              <span class="sub">{v.channel} · {v.category ? `filed under ${v.category}` : "doesn't look like a study video"}</span>
             </span>
             {#if pending?.video.id === v.id}
               <button class="ghost small" onclick={cancelAllow}>Allowing in {pending.left}s · Cancel</button>

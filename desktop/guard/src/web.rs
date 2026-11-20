@@ -123,14 +123,25 @@ fn connect(ip: Ipv4Addr) -> std::io::Result<TcpStream> {
 
 /// GETs `https://{host}{path}` and returns the body as text.
 pub fn get(host: &str, path: &str) -> Result<String, String> {
+    request(host, "GET", path, None)
+}
+
+/// POSTs a JSON body to `https://{host}{path}` and returns the reply body as text.
+pub fn post_json(host: &str, path: &str, body: &str) -> Result<String, String> {
+    request(host, "POST", path, Some(body))
+}
+
+fn request(host: &str, method: &str, path: &str, body: Option<&str>) -> Result<String, String> {
     let ip = resolve(host).ok_or("couldn't look up the site")?;
     let tcp = connect(ip).map_err(|e| format!("couldn't connect: {e}"))?;
     let name = ServerName::try_from(host.to_string()).map_err(|e| e.to_string())?;
     let conn = rustls::ClientConnection::new(client_config(), name).map_err(|e| e.to_string())?;
     let mut tls = rustls::StreamOwned::new(conn, tcp);
+    let extra = body.map(|b| format!("Content-Type: application/json\r\nContent-Length: {}\r\n", b.len())).unwrap_or_default();
     write!(
         tls,
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36\r\nAccept-Language: en-US,en;q=0.9\r\nCookie: CONSENT=YES+1; SOCS=CAI\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36\r\nAccept-Language: en-US,en;q=0.9\r\nCookie: CONSENT=YES+1; SOCS=CAI\r\nAccept-Encoding: identity\r\n{extra}Connection: close\r\n\r\n{}",
+        body.unwrap_or("")
     )
     .map_err(|e| e.to_string())?;
     let mut raw = vec![];

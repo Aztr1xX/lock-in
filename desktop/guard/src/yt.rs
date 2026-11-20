@@ -65,7 +65,12 @@ pub struct Video {
     #[serde(rename = "channelId")]
     pub channel_id: String,
     pub length: String,
+    /// The bit of description YouTube shows under the title in search results.
+    #[serde(skip)]
+    pub snippet: String,
     pub category: String,
+    /// What the verdict rests on: "category", "channel" or "title".
+    pub basis: String,
     pub allowed: bool,
     /// Why the category couldn't be read, if it couldn't.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -99,6 +104,11 @@ fn collect(v: &Value, out: &mut Vec<Video>) {
                             .unwrap_or("")
                             .to_string(),
                         length: text(r.get("lengthText").unwrap_or(&Value::Null)),
+                        snippet: r
+                            .pointer("/detailedMetadataSnippets/0/snippetText")
+                            .or_else(|| r.pointer("/descriptionSnippet"))
+                            .map(text)
+                            .unwrap_or_default(),
                         ..Default::default()
                     });
                 }
@@ -150,24 +160,53 @@ pub fn parse_category(html: &str) -> String {
     String::new()
 }
 
-/// A few snippets around "categor" or "genre", to show in the log when no category was found.
-fn clues(html: &str) -> String {
-    let lower = html.to_lowercase();
-    let mut out = vec![];
-    for key in ["categor", "genre"] {
-        let mut from = 0;
-        while let Some(i) = lower[from..].find(key) {
-            let at = from + i;
-            let a = (0..=at.saturating_sub(30)).rev().find(|&k| html.is_char_boundary(k)).unwrap_or(0);
-            let b = (at + 50..=html.len()).find(|&k| html.is_char_boundary(k)).unwrap_or(html.len());
-            out.push(html[a..b].replace('\n', " "));
-            from = at + key.len();
-            if out.len() >= 4 {
-                return out.join(" ~ ");
+/// The category from the watch page, or failing that from YouTube's player API.
+fn category_of(id: &str) -> (String, String) {
+    let mut problems = vec![];
+    match crate::web::get("www.youtube.com", &format!("/watch?v={id}")) {
+        Ok(h) => {
+            let c = parse_category(&h);
+            if !c.is_empty() {
+                return (c, String::new());
             }
+            problems.push(format!("watch page has no category ({} bytes)", h.len()));
         }
+        Err(e) => problems.push(format!("watch page: {e}")),
     }
-    if out.is_empty() { html.chars().take(120).collect() } else { out.join(" ~ ") }
+    let body = format!(
+        r#"{{"videoId":"{id}","context":{{"client":{{"clientName":"WEB","clientVersion":"2.20251119.01.00","hl":"en","gl":"US"}}}}}}"#
+    );
+    match crate::web::post_json("www.youtube.com", "/youtubei/v1/player?prettyPrint=false", &body) {
+        Ok(j) => {
+            let c = parse_category(&j);
+            if !c.is_empty() {
+                return (c, String::new());
+            }
+            let status = serde_json::from_str::<Value>(&j)
+                .ok()
+                .and_then(|v| v.pointer("/playabilityStatus/status").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or_default();
+            problems.push(format!("player API has no category ({} bytes, {status})", j.len()));
+        }
+        Err(e) => problems.push(format!("player API: {e}")),
+    }
+    (String::new(), problems.join("; "))
+}
+
+/// Decides whether a video plays. The uploader's category decides when it's known. When it
+/// isn't, the title and description have to read as study and not as entertainment.
+pub fn judge_video(v: &mut Video, allow_channels: &[String]) {
+    if !v.channel_id.is_empty() && allow_channels.contains(&v.channel_id) {
+        v.allowed = true;
+        v.basis = "channel".into();
+    } else if !v.category.is_empty() {
+        v.allowed = ALLOWED.contains(&v.category.as_str());
+        v.basis = "category".into();
+    } else {
+        let words = format!("{} {}", v.title, v.snippet);
+        v.allowed = has_any(&words, STUDY) && !has_any(&v.title, FUN);
+        v.basis = "title".into();
+    }
 }
 
 fn encode(q: &str) -> String {
@@ -194,23 +233,13 @@ pub fn search(q: &str, allow_channels: &[String]) -> Result<(String, Vec<Video>)
     let html = crate::web::get("www.youtube.com", &format!("/results?search_query={}&sp=EgIQAQ%3D%3D", encode(q)))?;
     let mut videos = parse_results(&html);
     videos.truncate(CHECK);
-    let handles: Vec<_> = videos
-        .iter()
-        .map(|v| {
-            let id = v.id.clone();
-            std::thread::spawn(move || match crate::web::get("www.youtube.com", &format!("/watch?v={id}")) {
-                Ok(h) => {
-                    let c = parse_category(&h);
-                    let problem = if c.is_empty() { format!("no category in {} bytes: {}", h.len(), clues(&h)) } else { String::new() };
-                    (c, problem)
-                }
-                Err(e) => (String::new(), e),
-            })
-        })
-        .collect();
+    let handles: Vec<_> = videos.iter().map(|v| {
+        let id = v.id.clone();
+        std::thread::spawn(move || category_of(&id))
+    }).collect();
     for (v, h) in videos.iter_mut().zip(handles) {
         (v.category, v.problem) = h.join().unwrap_or_default();
-        v.allowed = ALLOWED.contains(&v.category.as_str()) || allow_channels.contains(&v.channel_id);
+        judge_video(v, allow_channels);
     }
     Ok((verdict.into(), videos))
 }
@@ -238,5 +267,21 @@ mod tests {
         assert_eq!(parse_category(r#"<meta itemprop="genre" content="Science &amp; Technology">"#), "Science & Technology");
         assert_eq!(parse_category(r#""category":"VIDEO","category":"Education""#), "Education");
         assert_eq!(encode("a+b c"), "a%2Bb+c");
+    }
+
+    #[test]
+    fn judges_videos_without_a_category() {
+        let mut v = Video { title: "Alkene Addition Reactions: Crash Course Organic Chemistry #16".into(), channel_id: "UCx".into(), ..Default::default() };
+        judge_video(&mut v, &[]);
+        assert!(v.allowed);
+        let mut v = Video { title: "Minecraft but chemistry is real".into(), ..Default::default() };
+        judge_video(&mut v, &[]);
+        assert!(!v.allowed); // fun word in the title wins
+        let mut v = Video { title: "Chemistry lesson".into(), category: "Gaming".into(), ..Default::default() };
+        judge_video(&mut v, &[]);
+        assert!(!v.allowed); // a known category decides
+        let mut v = Video { title: "My day".into(), channel_id: "UCok".into(), ..Default::default() };
+        judge_video(&mut v, &["UCok".into()]);
+        assert!(v.allowed);
     }
 }
