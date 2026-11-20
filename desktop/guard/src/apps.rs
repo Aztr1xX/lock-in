@@ -170,8 +170,107 @@ pub fn installed() -> Vec<App> {
         app.kind = if app.kind == "other" { "game".into() } else { app.kind };
         push(&mut out, app);
     }
+    // Steam's own records of what it has installed, in every Steam library.
+    for (name, location) in steam_games() {
+        let mut app = classify(&name, &location, main_exe(&location)).unwrap_or(App { name: name.clone(), exes: vec![], kind: "game".into() });
+        if app.kind == "other" {
+            app.kind = "game".into();
+        }
+        push(&mut out, app);
+    }
+    // Game folders on every drive, for games no list mentions (Riot, Epic, Xbox, GOG, plain folders).
+    for (name, location) in game_folders() {
+        let mut app = classify(&name, &location, main_exe(&location)).unwrap_or(App { name: name.clone(), exes: vec![], kind: "game".into() });
+        if app.kind == "other" {
+            app.kind = "game".into();
+        }
+        push(&mut out, app);
+    }
     out.retain(|a| !a.exes.is_empty());
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Reads `"key"  "value"` pairs from Steam's text files.
+fn vdf_values(text: &str, key: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let parts: Vec<&str> = l.split('"').collect();
+            (parts.len() >= 4 && parts[1].eq_ignore_ascii_case(key)).then(|| parts[3].replace("\\\\", "\\"))
+        })
+        .collect()
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Steam tools that aren't games.
+fn steam_tool(name: &str) -> bool {
+    let low = name.to_lowercase();
+    ["steamworks", "redistributable", "proton", "steam linux runtime", "steamvr", "dedicated server", "sdk"].iter().any(|w| low.contains(w))
+}
+
+#[cfg(windows)]
+fn steam_games() -> Vec<(String, String)> {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+    use winreg::RegKey;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let mut roots: Vec<String> = ["SOFTWARE\\WOW6432Node\\Valve\\Steam", "SOFTWARE\\Valve\\Steam"]
+        .iter()
+        .filter_map(|p| hklm.open_subkey_with_flags(p, KEY_READ).ok()?.get_value::<String, _>("InstallPath").ok())
+        .collect();
+    roots.push("C:\\Program Files (x86)\\Steam".into());
+    let mut libraries: Vec<String> = vec![];
+    for root in &roots {
+        libraries.push(root.clone());
+        if let Ok(text) = std::fs::read_to_string(format!("{root}\\steamapps\\libraryfolders.vdf")) {
+            libraries.extend(vdf_values(&text, "path"));
+        }
+    }
+    libraries.sort_by_key(|l| l.to_lowercase());
+    libraries.dedup_by_key(|l| l.to_lowercase());
+    let mut out = vec![];
+    for lib in libraries {
+        let apps = format!("{lib}\\steamapps");
+        for e in std::fs::read_dir(&apps).into_iter().flatten().flatten() {
+            let file = e.file_name().to_string_lossy().to_lowercase();
+            if !(file.starts_with("appmanifest_") && file.ends_with(".acf")) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+            let (Some(name), Some(dir)) = (vdf_values(&text, "name").into_iter().next(), vdf_values(&text, "installdir").into_iter().next()) else { continue };
+            if !steam_tool(&name) {
+                out.push((name, format!("{apps}\\common\\{dir}")));
+            }
+        }
+    }
+    out
+}
+
+/// Each folder inside the usual game folders on every drive is treated as one game.
+#[cfg(windows)]
+fn game_folders() -> Vec<(String, String)> {
+    const PARENTS: &[&str] = &["Riot Games", "Epic Games", "Program Files\\Epic Games", "XboxGames", "Games", "GOG Games", "Program Files (x86)\\GOG Galaxy\\Games", "Program Files\\EA Games", "Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher\\games"];
+    let mut out = vec![];
+    for drive in b'C'..=b'H' {
+        for parent in PARENTS {
+            let dir = format!("{}:\\{parent}", drive as char);
+            for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let name = e.file_name().to_string_lossy().to_string();
+                let low = name.to_lowercase();
+                if low.starts_with('.') || ["launcher", "directxredist", "vcredist", "redist", "common", "manifests"].iter().any(|w| low == *w) || steam_tool(&name) {
+                    continue;
+                }
+                // Xbox games keep the program in a Content folder.
+                let path = e.path();
+                let content = path.join("Content");
+                let location = if content.is_dir() { content } else { path };
+                out.push((name, location.to_string_lossy().to_string()));
+            }
+        }
+    }
     out
 }
 
@@ -220,5 +319,9 @@ mod tests {
         push(&mut out, App { name: "steam".into(), exes: vec!["steam.exe".into(), "x.exe".into()], kind: "other".into() });
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].exes.len(), 2);
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n";
+        assert_eq!(vdf_values(vdf, "path"), vec!["D:\\SteamLibrary".to_string()]);
+        assert!(steam_tool("Steamworks Common Redistributables"));
+        assert!(!steam_tool("Hades"));
     }
 }

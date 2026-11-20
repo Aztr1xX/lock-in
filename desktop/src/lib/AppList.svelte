@@ -3,8 +3,14 @@
   // chat and media, each with a switch. Other installed apps can be added from the box below.
   import { cleanExe, KIND_LABEL, saveApps, type AppRow, type InstalledApp } from "./apps";
 
-  let { rows = $bindable(), installed, locked = false, loading = false }: { rows: AppRow[]; installed: InstalledApp[]; locked?: boolean; loading?: boolean } =
-    $props();
+  let {
+    rows = $bindable(),
+    installed,
+    locked = false,
+    loading = false,
+    needGuard = false,
+    onlookagain,
+  }: { rows: AppRow[]; installed: InstalledApp[]; locked?: boolean; loading?: boolean; needGuard?: boolean; onlookagain?: () => void } = $props();
 
   let adding = $state("");
   let addError = $state("");
@@ -57,8 +63,10 @@
 
 {#if loading}
   <p class="msg">Looking for installed apps...</p>
+{:else if needGuard}
+  <p class="msg">Click Update the Guard above, and your games and launchers will show here.</p>
 {:else if !rows.length}
-  <p class="msg">No games, launchers or chat apps found on this PC. Add any app below.</p>
+  <p class="msg">No games, launchers or chat apps found on this PC. Add any app below, or <button class="link inline-link" onclick={() => onlookagain?.()}>look again</button>.</p>
 {:else}
   <ul class="apps">
     {#each rows as r (r.name)}
@@ -94,5 +102,6 @@
   .name { font-weight: 600; overflow-wrap: anywhere; }
   .off .name { color: var(--muted); font-weight: 400; }
   .kind { flex-basis: 100%; padding-left: 28px; font-size: 12px; color: var(--muted); }
+  .inline-link { padding: 0; font-size: inherit; }
   .small-link { padding: 4px 0; font-size: 13px; }
 </style>

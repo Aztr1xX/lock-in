@@ -151,6 +151,7 @@
   let appRows = $state<AppRow[]>(buildRows([]));
   let appsLoading = $state(false);
   let appsLoaded = false;
+  let appsNeedGuard = $state(false);
 
   async function loadApps() {
     if (appsLoaded || !guard) return;
@@ -158,12 +159,24 @@
     appsLoading = true;
     try {
       const r = await call<{ ok: boolean; apps?: InstalledApp[] }>({ cmd: "apps" });
-      installed = r.apps ?? [];
-      appRows = buildRows(installed);
+      if (r.ok && Array.isArray(r.apps)) {
+        installed = r.apps;
+        appRows = buildRows(installed);
+        appsNeedGuard = false;
+      } else {
+        // An older Guard doesn't know how to list apps. Ask again once it's updated.
+        appsLoaded = false;
+        appsNeedGuard = true;
+      }
     } catch {
-      appsLoaded = false; // older Guard: try again after it's updated
+      appsLoaded = false;
     }
     appsLoading = false;
+  }
+
+  function lookAgain() {
+    appsLoaded = false;
+    loadApps();
   }
   $effect(() => {
     if (guard) loadApps();
@@ -368,7 +381,7 @@
       </div>
     </div>
     {#if guard}
-      <AppList bind:rows={appRows} {installed} locked={guard.blocking} loading={appsLoading} />
+      <AppList bind:rows={appRows} {installed} locked={guard.blocking} loading={appsLoading} needGuard={appsNeedGuard} onlookagain={lookAgain} />
     {:else}<p>Install the Guard in step 2 first.</p>{/if}
   </section>
 
