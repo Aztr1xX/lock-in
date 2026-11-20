@@ -1,22 +1,33 @@
-//! A tiny HTTPS client for the Guard's own requests (study YouTube search).
+//! The Guard's own connections to real sites (study-only YouTube).
 //!
 //! During a round the hosts file and the name layer stop youtube.com for everything, so the
 //! Guard looks names up itself (plain DNS to public resolvers) and connects from a reserved range
 //! of local ports that the name layer lets through.
 
 use rustls::pki_types::ServerName;
-use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// Local ports the Guard's own connections come from. divert.rs never touches these.
-pub const OWN_PORTS: (u16, u16) = (47900, 47999);
+pub const OWN_PORTS: (u16, u16) = (47000, 48999);
 
 /// Looks up an IPv4 address without going through Windows (so not through the hosts file).
+/// Answers are kept for five minutes.
 pub fn resolve(host: &str) -> Option<Ipv4Addr> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static CACHE: OnceLock<Mutex<HashMap<String, (Ipv4Addr, Instant)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((ip, at)) = cache.lock().unwrap().get(host) {
+        if at.elapsed() < Duration::from_secs(300) {
+            return Some(*ip);
+        }
+    }
     for server in ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"] {
         if let Some(ip) = query(host, server) {
+            cache.lock().unwrap().insert(host.to_string(), (ip, Instant::now()));
             return Some(ip);
         }
     }
@@ -112,7 +123,7 @@ fn connect(ip: Ipv4Addr) -> std::io::Result<TcpStream> {
         match s.connect_timeout(&target.into(), Duration::from_secs(5)) {
             Ok(()) => {
                 let t: TcpStream = s.into();
-                t.set_read_timeout(Some(Duration::from_secs(10)))?;
+                t.set_read_timeout(Some(Duration::from_secs(30)))?;
                 return Ok(t);
             }
             Err(e) => last = e,
@@ -121,70 +132,20 @@ fn connect(ip: Ipv4Addr) -> std::io::Result<TcpStream> {
     Err(last)
 }
 
-/// GETs `https://{host}{path}` and returns the body as text.
-pub fn get(host: &str, path: &str) -> Result<String, String> {
-    request(host, "GET", path, None)
-}
+/// A TLS connection to the real site, made the Guard's way (own DNS, reserved local port).
+pub type Tls = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
-/// POSTs a JSON body to `https://{host}{path}` and returns the reply body as text.
-pub fn post_json(host: &str, path: &str, body: &str) -> Result<String, String> {
-    request(host, "POST", path, Some(body))
-}
-
-fn request(host: &str, method: &str, path: &str, body: Option<&str>) -> Result<String, String> {
+pub fn open(host: &str) -> Result<Tls, String> {
     let ip = resolve(host).ok_or("couldn't look up the site")?;
     let tcp = connect(ip).map_err(|e| format!("couldn't connect: {e}"))?;
     let name = ServerName::try_from(host.to_string()).map_err(|e| e.to_string())?;
     let conn = rustls::ClientConnection::new(client_config(), name).map_err(|e| e.to_string())?;
-    let mut tls = rustls::StreamOwned::new(conn, tcp);
-    let extra = body.map(|b| format!("Content-Type: application/json\r\nContent-Length: {}\r\n", b.len())).unwrap_or_default();
-    write!(
-        tls,
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36\r\nAccept-Language: en-US,en;q=0.9\r\nCookie: CONSENT=YES+1; SOCS=CAI\r\nAccept-Encoding: identity\r\n{extra}Connection: close\r\n\r\n{}",
-        body.unwrap_or("")
-    )
-    .map_err(|e| e.to_string())?;
-    let mut raw = vec![];
-    // Servers often skip close_notify; whatever arrived before the connection ended is the reply.
-    let _ = tls.read_to_end(&mut raw);
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or("no reply")?;
-    let head = String::from_utf8_lossy(&raw[..split]).to_lowercase();
-    let mut body = raw[split + 4..].to_vec();
-    if !head.starts_with("http/1.1 200") && !head.starts_with("http/1.0 200") {
-        return Err(format!("site said {}", head.lines().next().unwrap_or("")));
-    }
-    if head.contains("transfer-encoding: chunked") {
-        body = unchunk(&body);
-    }
-    Ok(String::from_utf8_lossy(&body).into_owned())
-}
-
-fn unchunk(b: &[u8]) -> Vec<u8> {
-    let mut out = vec![];
-    let mut i = 0;
-    while i < b.len() {
-        let Some(eol) = b[i..].windows(2).position(|w| w == b"\r\n") else { break };
-        let size_txt = String::from_utf8_lossy(&b[i..i + eol]);
-        let Ok(size) = usize::from_str_radix(size_txt.split(';').next().unwrap_or("").trim(), 16) else { break };
-        i += eol + 2;
-        if size == 0 || i + size > b.len() {
-            out.extend_from_slice(&b[i..b.len().min(i + size)]);
-            break;
-        }
-        out.extend_from_slice(&b[i..i + size]);
-        i += size + 2;
-    }
-    out
+    Ok(rustls::StreamOwned::new(conn, tcp))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unchunks() {
-        assert_eq!(unchunk(b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"), b"Wikipedia");
-    }
 
     #[test]
     fn reads_a_dns_answer() {

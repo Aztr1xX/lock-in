@@ -21,6 +21,7 @@ mod page;
 mod sni;
 mod web;
 mod yt;
+mod ytproxy;
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -280,11 +281,6 @@ enum Req {
     Unblock,
     Kill { names: Vec<String> },
     Games,
-    YtSearch {
-        q: String,
-        #[serde(default, rename = "allowChannels")]
-        allow_channels: Vec<String>,
-    },
 }
 
 fn handle(req: Req) -> serde_json::Value {
@@ -316,10 +312,6 @@ fn handle(req: Req) -> serde_json::Value {
         }
         Req::Kill { names } => json!({ "ok": true, "killed": kill_by_name(&names) }),
         Req::Games => json!({ "ok": true, "games": running_games() }),
-        Req::YtSearch { q, allow_channels } => match yt::search(&q, &allow_channels) {
-            Ok((verdict, results)) => json!({ "ok": true, "verdict": verdict, "results": results }),
-            Err(e) => json!({ "ok": false, "error": e }),
-        },
     }
 }
 
@@ -366,6 +358,11 @@ fn serve_sink(mut stream: TcpStream, tls: bool) {
     let data = &buf[..n];
     let host = if tls { sni::server_name(data) } else { sni::http_host(data) };
     let Some(h) = host.filter(|h| is_blocked(h)) else { return };
+    // YouTube stays usable for studying: the Guard passes it through with the distractions taken out.
+    if tls && ytproxy::is_youtube(&h) {
+        ytproxy::serve(stream, &h, || state().lock().unwrap().saved.until.saturating_sub(now()));
+        return;
+    }
     record_attempt(h.clone());
     let left = state().lock().unwrap().saved.until.saturating_sub(now());
     if tls {

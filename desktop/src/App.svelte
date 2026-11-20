@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { CHECK_EVERY_MS, checkAndDownload, installNow, type UpdateState } from "./lib/updates";
-  import StudyTube from "./lib/StudyTube.svelte";
+  import SiteList from "./lib/SiteList.svelte";
+  import { blockedHosts, loadSites } from "./lib/sites";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
 
   type Mark = "pass" | "fail" | "";
@@ -98,7 +99,7 @@
   let guard = $state<Status | null>(null);
   let guardMsg = $state("");
   let busy = $state(false);
-  let sites = $state("reddit.com, example.com");
+  let sites = $state(loadSites());
   let minutes = $state(2);
 
   async function call<T>(req: object): Promise<T> {
@@ -127,9 +128,13 @@
   }
 
   async function block() {
-    const hosts = sites.split(/[\s,]+/).filter(Boolean);
+    const hosts = blockedHosts(sites);
+    if (!hosts.length) {
+      guardMsg = "Switch on at least one site first.";
+      return;
+    }
     const r = await call<{ ok: boolean; error?: string }>({ cmd: "block", hosts, minutes });
-    guardMsg = r.ok ? "Blocking. Try the sites now in Chrome, Incognito, Edge and Opera, including tabs that were already open." : `Could not block: ${r.error}`;
+    guardMsg = r.ok ? "Blocking. Try a few sites in Chrome and Opera, and try YouTube: search should work, the feed shouldn't." : `Could not block: ${r.error}`;
     refresh();
   }
 
@@ -174,8 +179,13 @@
     { id: "page", group: "Blocking", text: "A blocked site showed the \"This can wait\" page" },
     { id: "kill", group: "Games", text: "Notepad closed from the button" },
     { id: "game", group: "Games", text: "A real game showed in the list and closed" },
-    { id: "yt-search", group: "Study YouTube", text: "A study search showed videos, and a fun search was refused" },
-    { id: "yt-play", group: "Study YouTube", text: "A video played here while YouTube was blocked" },
+    { id: "yt-feed", group: "Study YouTube", text: "youtube.com opened with no feed, just search" },
+    { id: "yt-search", group: "Study YouTube", text: "A study search worked, and a fun search said \"That search can wait\"" },
+    { id: "yt-play", group: "Study YouTube", text: "A lesson or explainer played" },
+    { id: "yt-hold", group: "Study YouTube", text: "A music video or gaming video said \"This can wait\" instead of playing" },
+    { id: "yt-channel", group: "Study YouTube", text: "A channel's videos and playlists opened" },
+    { id: "yt-queue", group: "Study YouTube", text: "A playlist's queue showed beside the video, with no suggestions" },
+    { id: "page-center", group: "Blocking", text: "The \"This can wait\" page sat in the middle of the window" },
   ];
   let marks = $state<Record<string, Mark>>({});
   let note = $state("");
@@ -294,7 +304,7 @@
       <span class="num">2</span>
       <div>
         <h2>Site blocking</h2>
-        <p>Installs Lock In Guard, then blocks a couple of test sites in every browser for a few minutes.</p>
+        <p>Installs Lock In Guard, then blocks the sites below in every browser for a few minutes. YouTube stays open for studying.</p>
       </div>
     </div>
 
@@ -314,20 +324,20 @@
       {#if guard.blocking}
         <div class="live">
           <strong>Blocking for {fmt(guard.secondsLeft)}</strong>
-          <span>{guard.hosts.join(", ")}</span>
+          <span>{guard.hosts.length} site names, YouTube in study mode</span>
           <button class="ghost" onclick={unblock}>Unblock now</button>
         </div>
         {#if guard.layers}<p class="msg">Blocked through: hosts file{guard.layers.length ? `, ${guard.layers.join(", ")}` : ""}</p>{/if}
         {#if guard.hostsOk === false}<p class="err">Something (probably antivirus) took the block back out of the hosts file. Tell Claude.</p>{/if}
       {:else}
         <div class="row">
-          <input bind:value={sites} aria-label="Sites to block" />
           <select bind:value={minutes} aria-label="How long">
-            <option value={1}>1 min</option><option value={2}>2 min</option><option value={5}>5 min</option>
+            <option value={1}>1 min</option><option value={2}>2 min</option><option value={5}>5 min</option><option value={25}>25 min</option>
           </select>
-          <button onclick={block}>Block these</button>
+          <button onclick={block}>Block for {minutes} min</button>
         </div>
       {/if}
+      <SiteList bind:sites locked={guard.blocking} />
       {#if guard.attempts.length}
         <h3>Attempts the Guard saw</h3>
         <ul class="attempts">
@@ -362,17 +372,6 @@
       {/if}
       {#if killMsg}<p class="msg">{killMsg}</p>{/if}
     {:else}<p>Install the Guard in step 2 first.</p>{/if}
-  </section>
-
-  <section>
-    <div class="head">
-      <span class="num">4</span>
-      <div>
-        <h2>Study YouTube</h2>
-        <p>Search and watch videos that teach you something, right here. Fun searches and the feed don't exist.</p>
-      </div>
-    </div>
-    <StudyTube guardReady={!!guard} />
   </section>
 
   <section class="results">

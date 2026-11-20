@@ -1,22 +1,18 @@
-//! Study YouTube: search YouTube and judge which results are for studying.
+//! Study-only YouTube: decides which searches and videos are for learning.
 //!
-//! The app shows results and plays the allowed ones in its own player, with no feed, comments or
-//! recommendations. A search that's clearly for fun is refused. Each video is judged by the
-//! category its uploader filed it under (Education, Science & Technology), unless the person has
-//! chosen to allow its channel.
-
-use serde::Serialize;
-use serde_json::Value;
+//! Searches are judged by their words. A video is judged by the category its uploader filed it
+//! under when YouTube says (Education, Science & Technology), and otherwise by its title,
+//! description and tags: it has to read like it teaches something and not like entertainment.
 
 const ALLOWED: &[&str] = &["Education", "Science & Technology"];
-/// How many results get their category checked (each needs one page load).
-const CHECK: usize = 10;
+/// Categories that are almost never study unless the title says so.
+const LEISURE: &[&str] = &["Gaming", "Music", "Comedy", "Sports", "Entertainment", "Film & Animation"];
 
 const STUDY: &[&str] = &[
     "lecture", "lectures", "lesson", "lessons", "tutorial", "tutorials", "explained", "explanation", "how to",
     "revision", "revise", "exam", "exams", "gcse", "a level", "a levels", "alevel", "ib", "sat", "hsc", "vce",
     "atar", "matric", "nsc", "ieb", "past paper", "past papers", "worked example", "worked examples",
-    "practice questions", "course", "crash course", "khan", "physics", "chemistry", "biology", "math", "maths",
+    "practice questions", "crash course", "online course", "khan", "physics", "chemistry", "biology", "math", "maths",
     "mathematics", "calculus", "algebra", "geometry", "trig", "trigonometry", "statistics", "equation",
     "equations", "derivative", "derivatives", "integral", "integrals", "integration", "differentiation",
     "history", "geography", "economics", "accounting", "psychology", "english", "essay", "essays", "grammar",
@@ -25,7 +21,13 @@ const STUDY: &[&str] = &[
     "science", "cell", "cells", "atom", "atoms", "molecule", "molecules", "organic", "vector", "vectors",
     "matrix", "matrices", "probability", "thermodynamics", "quantum", "electricity", "circuit", "circuits",
     "genetics", "dna", "evolution", "photosynthesis", "mitosis", "meiosis", "enzyme", "enzymes", "anatomy",
-    "physiology", "study with me", "pomodoro", "proof", "theorem", "formula", "definition",
+    "physiology", "study with me", "pomodoro", "proof", "theorem", "formula", "definition", "learn",
+    "learning", "explain", "explains", "understand", "understanding", "introduction", "intro to", "basics",
+    "fundamentals", "beginner", "beginners", "concept", "concepts", "theory", "solve", "solving",
+    "examples", "university", "professor", "teacher", "teach", "teaching", "education", "educational",
+    "step by step", "alkene", "alkenes", "alkane", "alkanes", "reaction", "reactions", "stoichiometry",
+    "titration", "kinematics", "momentum", "electrons", "lesson plan", "syllabus", "grade 12", "grade 11",
+    "grade 10", "matric", "olympiad", "linear algebra", "differential equations", "economics",
 ];
 const FUN: &[&str] = &[
     "minecraft", "valorant", "fortnite", "roblox", "gta", "call of duty", "cod", "warzone", "csgo", "cs2",
@@ -35,15 +37,25 @@ const FUN: &[&str] = &[
     "reacts", "reaction", "vlog", "vlogs", "mrbeast", "tiktok", "shorts", "asmr", "music video",
     "official video", "lyrics", "song", "songs", "playlist", "album", "movie", "movies", "trailer", "episode",
     "anime", "highlights", "nba", "nfl", "ufc", "wwe", "f1", "unboxing", "try not to laugh", "drama", "edit",
-    "edits", "brawlhalla",
+    "edits", "brawlhalla", "official music video", "official audio", "remix", "challenge", "funniest",
+    "mukbang", "haul", "tier list", "gaming",
 ];
 
-fn has_any(q: &str, words: &[&str]) -> bool {
-    let padded = format!(
+fn words_of(q: &str) -> String {
+    format!(
         " {} ",
         q.to_lowercase().chars().map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
-    );
-    words.iter().any(|w| padded.contains(&format!(" {w} ")))
+    )
+}
+
+fn has_any(q: &str, words: &[&str]) -> bool {
+    hits(q, words) > 0
+}
+
+/// How many different words from `words` appear in `q` (whole words only).
+fn hits(q: &str, words: &[&str]) -> usize {
+    let padded = words_of(q);
+    words.iter().filter(|w| padded.contains(&format!(" {w} "))).count()
 }
 
 /// "study", "fun", or "unsure" from the words of the search alone.
@@ -57,85 +69,22 @@ pub fn judge_query(q: &str) -> &'static str {
     }
 }
 
-#[derive(Serialize, Clone, Default)]
-pub struct Video {
-    pub id: String,
-    pub title: String,
-    pub channel: String,
-    #[serde(rename = "channelId")]
-    pub channel_id: String,
-    pub length: String,
-    /// The bit of description YouTube shows under the title in search results.
-    #[serde(skip)]
-    pub snippet: String,
-    pub category: String,
-    /// What the verdict rests on: "category", "channel" or "title".
-    pub basis: String,
-    pub allowed: bool,
-    /// Why the category couldn't be read, if it couldn't.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub problem: String,
-}
-
-fn text(v: &Value) -> String {
-    if let Some(s) = v.get("simpleText").and_then(Value::as_str) {
-        return s.to_string();
+/// Whether a video teaches something, from what YouTube says about it.
+pub fn is_study(title: &str, description: &str, keywords: &str, category: &str) -> bool {
+    if ALLOWED.contains(&category) {
+        return true;
     }
-    v.get("runs")
-        .and_then(Value::as_array)
-        .map(|r| r.iter().filter_map(|x| x.get("text").and_then(Value::as_str)).collect::<String>())
-        .unwrap_or_default()
-}
-
-fn collect(v: &Value, out: &mut Vec<Video>) {
-    match v {
-        Value::Object(m) => {
-            if let Some(r) = m.get("videoRenderer") {
-                let id = r.get("videoId").and_then(Value::as_str).unwrap_or("");
-                if id.len() == 11 && !out.iter().any(|x| x.id == id) {
-                    let owner = r.get("ownerText").unwrap_or(&Value::Null);
-                    out.push(Video {
-                        id: id.to_string(),
-                        title: text(r.get("title").unwrap_or(&Value::Null)),
-                        channel: text(owner),
-                        channel_id: owner
-                            .pointer("/runs/0/navigationEndpoint/browseEndpoint/browseId")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        length: text(r.get("lengthText").unwrap_or(&Value::Null)),
-                        snippet: r
-                            .pointer("/detailedMetadataSnippets/0/snippetText")
-                            .or_else(|| r.pointer("/descriptionSnippet"))
-                            .map(text)
-                            .unwrap_or_default(),
-                        ..Default::default()
-                    });
-                }
-                return;
-            }
-            for x in m.values() {
-                collect(x, out);
-            }
-        }
-        Value::Array(a) => a.iter().for_each(|x| collect(x, out)),
-        _ => {}
+    if has_any(title, FUN) {
+        return false;
     }
+    let in_title = hits(title, STUDY);
+    if LEISURE.contains(&category) && in_title == 0 {
+        return false;
+    }
+    in_title * 2 + hits(&format!("{description} {keywords}"), STUDY) >= 2
 }
 
-/// Pulls the results out of a YouTube search page.
-pub fn parse_results(html: &str) -> Vec<Video> {
-    let Some(start) = html.find("var ytInitialData = ").map(|i| i + "var ytInitialData = ".len()) else { return vec![] };
-    let rest = &html[start..];
-    let end = rest.find(";</script>").unwrap_or(rest.len());
-    let Ok(data) = serde_json::from_str::<Value>(&rest[..end]) else { return vec![] };
-    let mut out = vec![];
-    collect(&data, &mut out);
-    out.retain(|v| !v.length.is_empty()); // live streams and upcoming premieres have no length
-    out
-}
-
-/// YouTube's own category names; the watch page has other "category" keys that aren't these.
+/// YouTube's own category names; pages have other "category" keys that aren't these.
 const CATEGORIES: &[&str] = &[
     "Film & Animation", "Autos & Vehicles", "Music", "Pets & Animals", "Sports", "Travel & Events", "Gaming",
     "People & Blogs", "Comedy", "Entertainment", "News & Politics", "Howto & Style", "Education",
@@ -143,9 +92,7 @@ const CATEGORIES: &[&str] = &[
 ];
 
 pub fn parse_category(html: &str) -> String {
-    // The player data has "category":"Education"; the page head has
-    // <meta itemprop="genre" content="Education">. Either is fine.
-    for key in ["\"category\":\"", "itemprop=\"genre\" content=\"", "\"genre\":\""] {
+    for key in ["\"category\":\"", "itemprop=\"genre\" content=\""] {
         let mut from = 0;
         while let Some(i) = html[from..].find(key) {
             let start = from + i + key.len();
@@ -158,99 +105,6 @@ pub fn parse_category(html: &str) -> String {
         }
     }
     String::new()
-}
-
-/// The category from the watch page, or failing that from YouTube's player API.
-fn category_of(id: &str) -> (String, String) {
-    let mut problems = vec![];
-    match crate::web::get("www.youtube.com", &format!("/watch?v={id}")) {
-        Ok(h) => {
-            let c = parse_category(&h);
-            if !c.is_empty() {
-                return (c, String::new());
-            }
-            problems.push(format!("watch page has no category ({} bytes)", h.len()));
-        }
-        Err(e) => problems.push(format!("watch page: {e}")),
-    }
-    let body = format!(
-        r#"{{"videoId":"{id}","context":{{"client":{{"clientName":"WEB","clientVersion":"2.20251119.01.00","hl":"en","gl":"US"}}}}}}"#
-    );
-    match crate::web::post_json("www.youtube.com", "/youtubei/v1/player?prettyPrint=false", &body) {
-        Ok(j) => {
-            let c = parse_category(&j);
-            if !c.is_empty() {
-                return (c, String::new());
-            }
-            let status = serde_json::from_str::<Value>(&j)
-                .ok()
-                .and_then(|v| v.pointer("/playabilityStatus/status").and_then(Value::as_str).map(str::to_string))
-                .unwrap_or_default();
-            problems.push(format!("player API has no category ({} bytes, {status})", j.len()));
-        }
-        Err(e) => problems.push(format!("player API: {e}")),
-    }
-    (String::new(), problems.join("; "))
-}
-
-/// Decides whether a video plays. The uploader's category decides when it's known. When it
-/// isn't, the title and description have to read as study and not as entertainment.
-pub fn judge_video(v: &mut Video, allow_channels: &[String], query: &str) {
-    if !v.channel_id.is_empty() && allow_channels.contains(&v.channel_id) {
-        v.allowed = true;
-        v.basis = "channel".into();
-    } else if !v.category.is_empty() {
-        v.allowed = ALLOWED.contains(&v.category.as_str());
-        v.basis = "category".into();
-    } else {
-        let words = format!("{} {}", v.title, v.snippet);
-        // A topic word from the search (like "alkene") counts as much as a study word.
-        let topic: Vec<String> = query
-            .to_lowercase()
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.len() >= 4 && !FUN.contains(w))
-            .map(|w| w.trim_end_matches('s').to_string())
-            .collect();
-        let lower = words.to_lowercase();
-        let on_topic = topic.iter().any(|w| lower.contains(w.as_str()));
-        v.allowed = (has_any(&words, STUDY) || on_topic) && !has_any(&v.title, FUN);
-        v.basis = "title".into();
-    }
-}
-
-fn encode(q: &str) -> String {
-    q.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
-            b' ' => "+".into(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
-
-/// Runs a search. Returns the verdict on the search and the judged results.
-pub fn search(q: &str, allow_channels: &[String]) -> Result<(String, Vec<Video>), String> {
-    let q = q.trim();
-    if q.is_empty() {
-        return Ok(("unsure".into(), vec![]));
-    }
-    let verdict = judge_query(q);
-    if verdict == "fun" {
-        return Ok(("fun".into(), vec![]));
-    }
-    // sp=EgIQAQ%3D%3D limits results to videos (no channels, playlists or Shorts shelves).
-    let html = crate::web::get("www.youtube.com", &format!("/results?search_query={}&sp=EgIQAQ%3D%3D", encode(q)))?;
-    let mut videos = parse_results(&html);
-    videos.truncate(CHECK);
-    let handles: Vec<_> = videos.iter().map(|v| {
-        let id = v.id.clone();
-        std::thread::spawn(move || category_of(&id))
-    }).collect();
-    for (v, h) in videos.iter_mut().zip(handles) {
-        (v.category, v.problem) = h.join().unwrap_or_default();
-        judge_video(v, allow_channels, q);
-    }
-    Ok((verdict.into(), videos))
 }
 
 #[cfg(test)]
@@ -267,36 +121,15 @@ mod tests {
     }
 
     #[test]
-    fn reads_results_and_category() {
-        let html = r#"<script>var ytInitialData = {"contents":{"x":[{"videoRenderer":{"videoId":"abcdefghijk","title":{"runs":[{"text":"Limits explained"}]},"ownerText":{"runs":[{"text":"Prof","navigationEndpoint":{"browseEndpoint":{"browseId":"UC123"}}}]},"lengthText":{"simpleText":"12:01"}}},{"videoRenderer":{"videoId":"livelivelive","title":{"runs":[{"text":"Live"}]}}}]}};</script>"#;
-        let v = parse_results(html);
-        assert_eq!(v.len(), 1);
-        assert_eq!((v[0].id.as_str(), v[0].title.as_str(), v[0].channel_id.as_str(), v[0].length.as_str()), ("abcdefghijk", "Limits explained", "UC123", "12:01"));
-        assert_eq!(parse_category(r#"..."category":"Science & Technology",..."#), "Science & Technology");
-        assert_eq!(parse_category(r#"<meta itemprop="genre" content="Science &amp; Technology">"#), "Science & Technology");
-        assert_eq!(parse_category(r#""category":"VIDEO","category":"Education""#), "Education");
-        assert_eq!(encode("a+b c"), "a%2Bb+c");
-    }
-
-    #[test]
-    fn judges_videos_without_a_category() {
-        let mut v = Video { title: "Alkene Addition Reactions: Crash Course Organic Chemistry #16".into(), channel_id: "UCx".into(), ..Default::default() };
-        judge_video(&mut v, &[], "");
-        assert!(v.allowed);
-        let mut v = Video { title: "Minecraft but chemistry is real".into(), ..Default::default() };
-        judge_video(&mut v, &[], "");
-        assert!(!v.allowed); // fun word in the title wins
-        let mut v = Video { title: "Chemistry lesson".into(), category: "Gaming".into(), ..Default::default() };
-        judge_video(&mut v, &[], "");
-        assert!(!v.allowed); // a known category decides
-        let mut v = Video { title: "My day".into(), channel_id: "UCok".into(), ..Default::default() };
-        judge_video(&mut v, &["UCok".into()], "");
-        assert!(v.allowed);
-        let mut v = Video { title: "Alkene Reactions".into(), ..Default::default() };
-        judge_video(&mut v, &[], "organic chemistry alkenes");
-        assert!(v.allowed); // on the topic searched for
-        let mut v = Video { title: "Alkene funny moments compilation".into(), ..Default::default() };
-        judge_video(&mut v, &[], "alkenes");
-        assert!(!v.allowed);
+    fn judges_videos() {
+        assert!(is_study("Alkene Addition Reactions: Crash Course Organic Chemistry #16", "", "", ""));
+        assert!(is_study("Lecture 3", "", "", "Education"));
+        assert!(is_study("The Map of Mathematics", "An animated tour that explains how the fields of maths fit together.", "", "Science & Technology"));
+        assert!(is_study("Why do cells divide?", "We explain mitosis step by step.", "", "People & Blogs"));
+        assert!(!is_study("Rick Astley - Never Gonna Give You Up (Official Video)", "The official video", "", "Music"));
+        assert!(!is_study("Minecraft but chemistry is real", "", "", "Gaming"));
+        assert!(!is_study("My week in Cape Town", "Of course I had to try the food", "vlog", "People & Blogs"));
+        assert!(!is_study("Top 10 goals", "learn more on our site", "", "Sports"));
+        assert_eq!(parse_category(r#"..."category":"VIDEO","category":"Science \u0026 Technology",..."#), "Science & Technology");
     }
 }

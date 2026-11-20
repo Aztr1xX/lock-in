@@ -26,8 +26,6 @@ Start-Sleep -Seconds 2
 $st = Guard @{ cmd = "status" }
 Check ($st.ok) "service answers (version $($st.version), sinkhole: $($st.sinkhole -join ' '))"
 
-$y = Guard @{ cmd = "yt_search"; q = "minecraft hardcore" }
-Check ($y.ok -and $y.verdict -eq "fun" -and @($y.results).Count -eq 0) "study YouTube refuses a fun search"
 $r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org", "youtube.com"); minutes = 1.5 }
 Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.hosts -join ', '))"
 $st = Guard @{ cmd = "status" }
@@ -69,13 +67,34 @@ curl.exe -s --max-time 8 https://en.wikipedia.org/ -o wiki.html
 Check ($LASTEXITCODE -ne 0) "a subdomain not in the hosts file is stopped by name (curl exit $LASTEXITCODE)"
 curl.exe -s --max-time 8 -o NUL https://www.iana.org/
 Check ($LASTEXITCODE -eq 0) "other sites still load during the block"
-# Study YouTube has to keep working while youtube.com is blocked for everything else.
-Step "study YouTube search"
-$y = Guard @{ cmd = "yt_search"; q = "organic chemistry alkenes" }
-$allowed = @($y.results | Where-Object { $_.allowed })
-Write-Host "      study search: ok=$($y.ok) verdict=$($y.verdict) results=$(@($y.results).Count) allowed=$($allowed.Count) error=$($y.error)"
-if ($y.results) { $y.results | Select-Object -First 4 | ForEach-Object { Write-Host "        $($_.allowed) $($_.basis) $($_.category) | $($_.title) $($_.problem)" } }
-Check ($y.ok -and @($y.results).Count -ge 3 -and $allowed.Count -ge 1) "study YouTube search works during a YouTube block"
+# YouTube stays open for studying: the Guard passes it through with the feed and fun taken out.
+function Yt($path) { return (curl.exe -s --ssl-no-revoke --max-time 25 "https://www.youtube.com$path" | Out-String) }
+Step "study-only YouTube"
+$ythome = Yt "/"
+Check ($ythome -match "lockin-study" -and $ythome -notmatch "This can wait") "youtube.com opens with the feed hidden ($($ythome.Length) chars)"
+$sh = curl.exe -s --ssl-no-revoke --max-time 10 -D - -o NUL https://www.youtube.com/shorts/dQw4w9WgXcQ | Out-String
+Check ($sh -match "Location: /watch\?v=dQw4w9WgXcQ") "Shorts open as normal videos, so they get checked too"
+$short = curl.exe -s --ssl-no-revoke --max-time 10 -D - -o NUL https://youtu.be/dQw4w9WgXcQ | Out-String
+Check ($short -match "Location: https://www.youtube.com/watch\?v=dQw4w9WgXcQ") "youtu.be links lead to the checked video page"
+Check ((Yt "/results?search_query=minecraft+hardcore") -match "That search can wait") "a fun search is held back"
+$ss = Yt "/results?search_query=integration+by+parts+lesson"
+$ids = @([regex]::Matches($ss, '"videoId":"([A-Za-z0-9_-]{11})"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
+Check ($ss -match "lockin-study" -and $ids.Count -ge 3) "a study search shows results ($($ids.Count) videos)"
+$open = 0
+foreach ($id in $ids) {
+  $w = Yt "/watch?v=$id"
+  $t = [regex]::Match($w, '<meta name="title" content="([^"]*)"').Groups[1].Value
+  $ok = $w -notmatch "This video can wait" -and $w -match "lockin-study"
+  Write-Host "        plays=$ok | $t"
+  if ($ok) { $open++ }
+}
+Check ($open -ge 1) "study videos open ($open of $($ids.Count))"
+Check ((Yt "/watch?v=dQw4w9WgXcQ") -match "This video can wait") "a music video is held back"
+Set-Content -Path player.json -Value '{"videoId":"dQw4w9WgXcQ","context":{"client":{"clientName":"WEB","clientVersion":"2.20251119.01.00","hl":"en","gl":"US"}}}' -NoNewline
+$pl = curl.exe -s --ssl-no-revoke --max-time 15 -H "Content-Type: application/json" --data-binary "@player.json" "https://www.youtube.com/youtubei/v1/player?prettyPrint=false" | Out-String
+$status = [regex]::Match($pl, '"playabilityStatus":\{"status":"([A-Z_]+)"').Groups[1].Value
+Write-Host "      player answer: $($pl.Length) chars, status $status, details $($pl -match '"videoDetails"')"
+Check ($pl -match "This can wait" -or $pl -notmatch '"videoDetails"') "the player won't play a music video clicked inside YouTube"
 $hasChrome = Test-Path $chrome
 if ($hasChrome) {
   # en.wikipedia.org isn't in the hosts file, so only the browser policy can stop it.
@@ -86,6 +105,9 @@ if ($hasChrome) {
   Step "chrome: blocked site page"
   $domPage = ChromeDom "https://www.example.org/"
   Check ($domPage -match "This can wait") "Chrome shows the Lock In page for a blocked site"
+  Step "chrome: study-only YouTube"
+  $domYt = ChromeDom "https://www.youtube.com/"
+  Check ($domYt -match "lockin-study") "Chrome opens study-only YouTube ($($domYt.Length) chars)"
 }
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check ($hosts -match "127\.0\.0\.1 example\.com") "hosts file has the Lock In section"

@@ -40,6 +40,9 @@ pub fn expand(input: &[String]) -> Vec<String> {
         if base.split('.').count() == 2 {
             names.push(format!("m.{base}"));
         }
+        if base == "youtube.com" {
+            names.push("youtu.be".into()); // YouTube's short links
+        }
         for n in names {
             if !out.contains(&n) {
                 out.push(n);

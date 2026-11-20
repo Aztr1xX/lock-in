@@ -127,16 +127,18 @@ pub fn end() {
     trust::remove_all();
 }
 
+/// Wraps a browser's connection in TLS with this round's certificate. None outside a round.
+pub fn accept(stream: TcpStream) -> Option<rustls::StreamOwned<rustls::ServerConnection, TcpStream>> {
+    if round().lock().unwrap().is_none() {
+        return None;
+    }
+    let conn = rustls::ServerConnection::new(config()).ok()?;
+    Some(rustls::StreamOwned::new(conn, stream))
+}
+
 /// Serves the page to a browser that connected to the sinkhole over HTTPS.
 pub fn serve_tls(stream: TcpStream, host: &str, seconds_left: u64) {
-    if round().lock().unwrap().is_none() {
-        return;
-    }
-    let conn = match rustls::ServerConnection::new(config()) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let mut tls = rustls::StreamOwned::new(conn, stream);
+    let Some(mut tls) = accept(stream) else { return };
     let mut buf = [0u8; 4096];
     // Read the request (the handshake happens inside this read), then answer whatever was asked.
     if tls.read(&mut buf).unwrap_or(0) == 0 {
@@ -150,7 +152,11 @@ pub fn serve_tls(stream: TcpStream, host: &str, seconds_left: u64) {
 
 /// The HTTP response carrying the page.
 pub fn response(host: &str, seconds_left: u64) -> Vec<u8> {
-    let body = html(host, seconds_left);
+    wrap(&html(host, seconds_left))
+}
+
+/// An HTTP response around any page body.
+pub fn wrap(body: &str) -> Vec<u8> {
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
@@ -167,6 +173,16 @@ fn site_label(host: &str) -> String {
 /// Warm paper, ink type, one clear message. The countdown is real: it's the round's time left.
 pub fn html(host: &str, seconds_left: u64) -> String {
     let site = site_label(host);
+    card(
+        "This can wait.",
+        &format!(r#"<p><span class="site">{site}</span> is off until your round ends.</p>
+<p>Close this tab and pick up where you left off.</p>"#),
+        seconds_left,
+    )
+}
+
+/// The same card with any heading and lines. `lines` is trusted HTML; escape anything from outside.
+pub fn card(heading: &str, lines: &str, seconds_left: u64) -> String {
     let mins = seconds_left.div_ceil(60);
     let when = if seconds_left == 0 {
         "Your round is ending now.".to_string()
@@ -177,23 +193,25 @@ pub fn html(host: &str, seconds_left: u64) -> String {
     };
     format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>This can wait · Lock In</title>
+<title>{heading} · Lock In</title>
 <style>
 :root{{--paper:#f3ead8;--ink:#2c3a2a;--muted:#6b705f;--moss:#4f6b3a;--line:#ddd2bb;color-scheme:light}}
 @media (prefers-color-scheme:dark){{:root{{--paper:#1b211a;--ink:#ece4d2;--muted:#a9a693;--moss:#9cbb7a;--line:#36402f;color-scheme:dark}}}}
 *{{box-sizing:border-box}}
-body{{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font:17px/1.55 "Segoe UI",system-ui,sans-serif;padding:24px}}
-main{{max-width:30rem;text-align:center}}
+html,body{{margin:0;height:100%;background:var(--paper)}}
+body{{position:fixed;inset:0;overflow:auto;display:flex;align-items:center;justify-content:center;color:var(--ink);font:17px/1.55 "Segoe UI",system-ui,sans-serif;padding:24px}}
+main{{width:100%;max-width:30rem;margin:auto;text-align:center}}
 .mark{{display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--moss);margin-bottom:28px}}
 h1{{font:600 clamp(40px,8vw,64px)/1.05 Georgia,"Times New Roman",serif;margin:0 0 18px;letter-spacing:-.01em}}
 p{{margin:0 0 8px;color:var(--muted)}}
 .site{{color:var(--ink);font-weight:600}}
+a{{color:var(--moss);font-weight:600}}
+a:focus-visible{{outline:2px solid var(--moss);outline-offset:3px;border-radius:2px}}
 .when{{margin-top:28px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink);font-variant-numeric:tabular-nums}}
 </style></head><body><main>
 <span class="mark">Lock In</span>
-<h1>This can wait.</h1>
-<p><span class="site">{site}</span> is off until your round ends.</p>
-<p>Close this tab and pick up where you left off.</p>
+<h1>{heading}</h1>
+{lines}
 <p class="when" id="when" data-left="{seconds_left}">{when}</p>
 </main>
 <script>
@@ -203,6 +221,11 @@ el.textContent=s===0?"Your round is over. Refresh to carry on.":s<60?"Back in un
 if(s>0)setTimeout(tick,1000)}}tick()}})();
 </script></body></html>"#
     )
+}
+
+/// Makes outside text safe to put in a page.
+pub fn escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 // ---------- Windows trusted list ----------
