@@ -155,7 +155,13 @@ def dfine():
             Wrapped(model), torch.zeros(1, 3, size, size), str(path), input_names=["pixel_values"],
             output_names=["logits", "pred_boxes"], opset_version=17, dynamo=False,
         )
-        add(f"dfine-n-{size}", path, "dfine", size, "D-FINE Nano", "Apache-2.0")
+        # The traced graph computes its position embeddings from the input shape with float64
+        # maths that ONNX Runtime can't run; the shape is fixed, so fold them into constants.
+        import onnxslim
+
+        slim = TMP / f"dfine{size}-slim.onnx"
+        onnxslim.slim(str(path), str(slim))
+        add(f"dfine-n-{size}", slim, "dfine", size, "D-FINE Nano", "Apache-2.0")
 
     proc = AutoImageProcessor.from_pretrained(repo)
     inputs = proc(images=BUS, return_tensors="pt", size={"height": 416, "width": 416})
@@ -172,7 +178,8 @@ def yolo():
     from ultralytics import YOLO
 
     for size in (416, 320):
-        path = Path(YOLO("yolo26n.pt").export(format="onnx", imgsz=size, opset=17, simplify=True))
+        # nms=False keeps YOLO26's NMS-free head: 300 rows of x1, y1, x2, y2, score, class.
+        path = Path(YOLO("yolo26n.pt").export(format="onnx", imgsz=size, opset=17, simplify=True, nms=False))
         moved = TMP / f"yolo26n-{size}.onnx"
         shutil.move(path, moved)
         add(f"yolo26n-{size}", moved, "yolo26", size, "YOLO26n", "AGPL-3.0", timing_only=True)
@@ -210,6 +217,20 @@ def rtmpose():
         dict(box=box, keypoints=[[round(float(x), 1), round(float(y), 1), round(float(s), 3)] for (x, y), s in zip(kpts[0], scores[0])])
     ]
 
+
+# Every model must open and run in ONNX Runtime on the CPU, the way the app will use it.
+import onnxruntime as ort  # noqa: E402
+
+for m in models:
+    try:
+        sess = ort.InferenceSession(str(OUT / m["file"]), providers=["CPUExecutionProvider"])
+        inp = sess.get_inputs()[0]
+        outs = sess.run(None, {inp.name: np.zeros((1, 3, m["height"], m["width"]), np.float32)})
+        m["outputs"] = [[o.name, list(v.shape)] for o, v in zip(sess.get_outputs(), outs)]
+        print(f"  runs: {m['id']} -> {m['outputs']}")
+    except Exception as e:
+        print(f"  DOES NOT RUN: {m['id']}: {e}")
+        problems.append(f"{m['id']} doesn't run in ONNX Runtime")
 
 # A full check is the whole frame, a closer look at the hands, and the pose model on the person box.
 checks = [
