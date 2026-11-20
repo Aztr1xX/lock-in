@@ -50,7 +50,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczNjRBQTMwMDZCMTEwMTIKUldRU0VMRUdNS3BrYzUvSGJISjhCcUhMRHBrQkQ4MEFtalpsWUllUzNRT042WkUxazhYRC9EWWkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDODNDRjJCQjYxRDVBMkMKUldRc1doMjJLOCtEVEUvcmVUTENPcEFsalcvekIvZzdRdmlOblFZbEdtcGlQZHhuaXllMityQmUK",
       "endpoints": [
         "https://github.com/Aztr1xX/lock-in/releases/latest/download/latest.json"
       ],
