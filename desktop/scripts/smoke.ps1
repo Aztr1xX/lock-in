@@ -26,7 +26,10 @@ Start-Sleep -Seconds 2
 $st = Guard @{ cmd = "status" }
 Check ($st.ok) "service answers (version $($st.version), sinkhole: $($st.sinkhole -join ' '))"
 
-$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org", "youtube.com"); minutes = 1.5 }
+$a = Guard @{ cmd = "apps" }
+Write-Host "      installed apps found: $(@($a.apps).Count) ($((@($a.apps) | Select-Object -First 6 | ForEach-Object { "$($_.name) [$($_.kind)]" }) -join ', '))"
+Check ($a.ok) "the Guard lists installed apps"
+$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org", "youtube.com"); minutes = 1.5; apps = @("notepad.exe") }
 Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.hosts -join ', '))"
 $st = Guard @{ cmd = "status" }
 Check ($st.hostsOk) "hosts section still in place"
@@ -73,6 +76,7 @@ function Yt($path) { return (curl.exe -s --ssl-no-revoke --max-time 25 -A "Mozil
 Step "study-only YouTube"
 $ythome = Yt "/"
 Check ($ythome -match "lockin-study" -and $ythome -notmatch "This can wait") "youtube.com opens with the feed hidden ($($ythome.Length) chars)"
+Check ($ythome -match '<script id="lockin-study-js" nonce="[^"]+">') "videos open as full pages so each one gets checked (script carries YouTube's nonce)"
 $sh = curl.exe -s --ssl-no-revoke --max-time 10 -D - -o NUL https://www.youtube.com/shorts/dQw4w9WgXcQ | Out-String
 Check ($sh -match "Location: /watch\?v=dQw4w9WgXcQ") "Shorts open as normal videos, so they get checked too"
 $short = curl.exe -s --ssl-no-revoke --max-time 10 -D - -o NUL https://youtu.be/dQw4w9WgXcQ | Out-String
@@ -112,6 +116,7 @@ if ($hasChrome) {
   Step "chrome: study-only YouTube"
   $domYt = ChromeDom "https://www.youtube.com/"
   Check ($domYt -match "lockin-study") "Chrome opens study-only YouTube ($($domYt.Length) chars)"
+  Check ($domYt -match 'data-lockin="1"') "the full-page script runs in Chrome (YouTube's security rules allow it)"
 }
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check ($hosts -match "127\.0\.0\.1 example\.com") "hosts file has the Lock In section"
@@ -131,17 +136,22 @@ $st = Guard @{ cmd = "status" }
 $seen = $st.attempts | ForEach-Object { $_.host }
 Check ($seen -contains "example.com") "HTTPS attempt was seen through SNI ($($seen -join ', '))"
 
+# Notepad stands in for a game: it's on the round's list, so opening it gets it closed again.
 $np = Start-Process notepad -PassThru
-Start-Sleep -Seconds 2
-$k = Guard @{ cmd = "kill"; names = @("notepad.exe") }
-Start-Sleep -Seconds 1
-Check ($k.killed.Count -ge 1 -and $np.HasExited) "Notepad closed through the Guard"
+Start-Sleep -Seconds 6
+Check ($np.HasExited) "an app on the round's list is closed again when it's opened"
 
 Write-Host "Waiting for the block to end on its own..."
 do { Start-Sleep -Seconds 2; $st = Guard @{ cmd = "status" } } while ($st.blocking)
 Start-Sleep -Seconds 2
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check (-not ($hosts -match "Lock In")) "block ended on time and the hosts file is clean"
+$np = Start-Process notepad -PassThru
+Start-Sleep -Seconds 5
+Check (-not $np.HasExited) "apps can open again after the round"
+$k = Guard @{ cmd = "kill"; names = @("notepad.exe") }
+Start-Sleep -Seconds 1
+Check ($k.killed.Count -ge 1 -and $np.HasExited) "Notepad closed through the Guard on request"
 $doh = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name DnsOverHttpsMode -ErrorAction SilentlyContinue
 Check (-not $doh) "Chrome secure DNS setting removed"
 for ($i = 0; $i -lt 15; $i++) {

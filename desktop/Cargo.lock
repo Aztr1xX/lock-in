@@ -2050,6 +2050,8 @@ dependencies = [
 name = "lockin-guard"
 version = "0.0.1"
 dependencies = [
+ "brotli-decompressor",
+ "flate2",
  "rcgen",
  "rustls",
  "serde",

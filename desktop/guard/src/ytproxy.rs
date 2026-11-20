@@ -50,6 +50,18 @@ ytd-search ytd-horizontal-card-list-renderer,
 ytd-browse[page-subtype="home"] #primary::before{content:"Search for what you're studying.";display:block;text-align:center;padding:28vh 16px 0;font:400 22px/1.4 Roboto,Arial,sans-serif;color:var(--yt-spec-text-secondary,#606060)}
 </style>"#;
 
+/// Makes every video open as a full page load, so the Guard checks it before it plays. YouTube
+/// normally swaps videos in place, which would skip the check until a refresh.
+const SCRIPT: &str = r#"(function(){
+document.documentElement.setAttribute('data-lockin','1');
+var here=new URLSearchParams(location.search).get('v');
+function vid(u){try{var x=new URL(u,location.href);if(x.origin!==location.origin)return null;if(x.pathname==='/watch')return x.searchParams.get('v');var m=x.pathname.match(/^\/shorts\/([\w-]{11})/);return m?m[1]:null}catch(e){return null}}
+function load(u){location.assign(new URL(u,location.href).href)}
+document.addEventListener('click',function(e){if(e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;var v=vid(a.href);if(v&&v!==here){e.preventDefault();e.stopImmediatePropagation();load(a.href)}},true);
+['pushState','replaceState'].forEach(function(n){var f=history[n];history[n]=function(s,t,u){var v=u?vid(u):null;if(v&&v!==here){load(u);return}return f.apply(this,arguments)}});
+document.addEventListener('yt-navigate-start',function(e){var u=e.detail&&e.detail.url;var v=u?vid(u):null;if(v&&v!==here)load(u)},true);
+})();"#;
+
 /// Replaces YouTube's service worker for the round, so pages can't come from its cache unfiltered.
 const NO_WORKER: &str = "self.addEventListener('install',function(){self.skipWaiting()});self.addEventListener('activate',function(){self.registration.unregister()});";
 
@@ -267,12 +279,42 @@ pub fn judge_player(body: &[u8]) -> Option<Vec<u8>> {
     serde_json::to_vec(&v).ok()
 }
 
-/// Puts the hiding styles into a YouTube page.
+/// Puts the hiding styles and the full-page-load script into a YouTube page. The script reuses
+/// the page's own script nonce, which YouTube's security rules require.
 pub fn add_style(html: &str) -> String {
+    let nonce = html
+        .find("<script nonce=\"")
+        .map(|i| {
+            let rest = &html[i + 15..];
+            rest[..rest.find('"').unwrap_or(0)].to_string()
+        })
+        .filter(|n| n.chars().all(|c| c.is_ascii_alphanumeric() || "+/=_-".contains(c)))
+        .unwrap_or_default();
+    let attr = if nonce.is_empty() { String::new() } else { format!(" nonce=\"{nonce}\"") };
+    let add = format!("{STYLE}<script id=\"lockin-study-js\"{attr}>{SCRIPT}</script>");
     match html.find("</head>") {
-        Some(i) => format!("{}{STYLE}{}", &html[..i], &html[i..]),
-        None => format!("{STYLE}{html}"),
+        Some(i) => format!("{}{add}{}", &html[..i], &html[i..]),
+        None => format!("{add}{html}"),
     }
+}
+
+/// Undoes gzip, deflate or brotli, in case YouTube compresses even when asked not to.
+fn decode(body: Vec<u8>, encoding: &str) -> io::Result<Vec<u8>> {
+    let mut out = vec![];
+    match encoding.trim().to_ascii_lowercase().as_str() {
+        "" | "identity" => return Ok(body),
+        "gzip" | "x-gzip" => {
+            flate2::read::GzDecoder::new(&body[..]).take(MAX_INSPECT as u64 * 4).read_to_end(&mut out)?;
+        }
+        "deflate" => {
+            flate2::read::ZlibDecoder::new(&body[..]).take(MAX_INSPECT as u64 * 4).read_to_end(&mut out)?;
+        }
+        "br" => {
+            brotli_decompressor::Decompressor::new(&body[..], 64 * 1024).take(MAX_INSPECT as u64 * 4).read_to_end(&mut out)?;
+        }
+        _ => return Err(io::Error::other("unknown encoding")),
+    }
+    Ok(out)
 }
 
 // ---------- HTTP/1.1 plumbing ----------
@@ -429,9 +471,13 @@ fn exchange<C: Write>(client: &mut C, up: &mut Up, req: &Request, look: Look, se
     let up_closes = get(&headers, "connection").is_some_and(|v| v.eq_ignore_ascii_case("close"));
     let no_body = req.method == "HEAD" || status == 204 || status == 304 || (100..200).contains(&status);
     let framed = is_chunked(&headers) || content_length(&headers).is_some();
-    let encoded = get(&headers, "content-encoding").is_some_and(|e| !e.eq_ignore_ascii_case("identity"));
+    let encoding = get(&headers, "content-encoding").unwrap_or("").to_string();
+    let known = matches!(encoding.trim().to_ascii_lowercase().as_str(), "" | "identity" | "gzip" | "x-gzip" | "deflate" | "br");
     let ctype = get(&headers, "content-type").unwrap_or("").to_ascii_lowercase();
-    let inspect = look != Look::Nothing && status == 200 && !no_body && !encoded && (ctype.contains("html") || ctype.contains("json"));
+    let inspect = look != Look::Nothing && status == 200 && !no_body && known && (ctype.contains("html") || ctype.contains("json"));
+    if look == Look::Player && !inspect {
+        crate::log(&format!("study youtube: player answer not checked (status {status}, type {ctype}, encoding {encoding})"));
+    }
 
     if inspect {
         let mut body = vec![];
@@ -446,8 +492,15 @@ fn exchange<C: Write>(client: &mut C, up: &mut Up, req: &Request, look: Look, se
         } else {
             up.take(MAX_INSPECT as u64).read_to_end(&mut body)?;
         }
+        let body = decode(body, &encoding)?;
         let new_body: Vec<u8> = match look {
-            Look::Player => judge_player(&body).unwrap_or(body),
+            Look::Player => match judge_player(&body) {
+                Some(held) => {
+                    crate::log("study youtube: held back a video in the player");
+                    held
+                }
+                None => body,
+            },
             Look::WatchPage => {
                 let html = String::from_utf8_lossy(&body);
                 match judge_watch_page(&html) {
@@ -466,7 +519,7 @@ fn exchange<C: Write>(client: &mut C, up: &mut Up, req: &Request, look: Look, se
         let mut head = format!("{}\r\n", lines[0].replacen("HTTP/1.0", "HTTP/1.1", 1));
         for (k, v) in &headers {
             let lk = k.to_ascii_lowercase();
-            if matches!(lk.as_str(), "content-length" | "transfer-encoding" | "connection" | "keep-alive" | "alt-svc") {
+            if matches!(lk.as_str(), "content-length" | "transfer-encoding" | "content-encoding" | "connection" | "keep-alive" | "alt-svc") {
                 continue;
             }
             head.push_str(&format!("{k}: {v}\r\n"));
@@ -608,6 +661,11 @@ mod tests {
         let player_ok = br#"{"videoDetails":{"title":"Limits explained"},"microformat":{"playerMicroformatRenderer":{"category":"Education"}}}"#;
         assert!(judge_player(player_ok).is_none());
         assert!(add_style("<html><head></head>").contains("lockin-study"));
+        let page = add_style(r#"<html><head><script nonce="abc123">x</script></head>"#);
+        assert!(page.contains(r#"<script id="lockin-study-js" nonce="abc123">"#));
+        let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, b"hello").unwrap();
+        assert_eq!(decode(gz.finish().unwrap(), "gzip").unwrap(), b"hello");
     }
 
     #[test]

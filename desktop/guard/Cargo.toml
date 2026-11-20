@@ -17,6 +17,8 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 webpki-roots = "1"
 socket2 = "0.6"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+flate2 = "1.1.11"
+brotli-decompressor = "6.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"

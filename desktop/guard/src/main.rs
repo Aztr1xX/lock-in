@@ -14,6 +14,7 @@
 //!   lockin-guard run         run in the foreground, for testing
 //!   lockin-guard service     what Windows runs; not for people
 
+mod apps;
 mod browsers;
 mod divert;
 mod hosts;
@@ -55,6 +56,9 @@ struct Saved {
     /// Which extra layers took (Chrome, Edge, Firewall...), for the app to show.
     #[serde(default)]
     layers: Vec<String>,
+    /// Programs kept closed for the round, like "Discord.exe".
+    #[serde(default)]
+    apps: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -116,7 +120,7 @@ fn load() -> Saved {
 
 // ---------- blocking ----------
 
-fn start_block(names: &[String], minutes: f64) -> Result<Saved, String> {
+fn start_block(names: &[String], minutes: f64, close: &[String]) -> Result<Saved, String> {
     let list = hosts::expand(names);
     if list.is_empty() {
         return Err("no valid site names".into());
@@ -135,7 +139,8 @@ fn start_block(names: &[String], minutes: f64) -> Result<Saved, String> {
         layers.push("Page".into());
     }
     let mut st = state().lock().unwrap();
-    st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64, touched, layers };
+    let close: Vec<String> = close.iter().map(|a| a.trim().to_string()).filter(|a| a.to_lowercase().ends_with(".exe")).collect();
+    st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64, touched, layers, apps: close };
     save(&st.saved);
     log(&format!("block {} names for {minutes} min, layers: hosts {}", st.saved.hosts.len(), st.saved.layers.join(" ")));
     Ok(st.saved.clone())
@@ -189,6 +194,7 @@ fn record_attempt(host: String) {
 
 /// Ends blocking on time, whether or not the app is still running.
 fn ticker(stop: Arc<AtomicBool>) {
+    let mut tick: u64 = 0;
     while !stop.load(Ordering::Relaxed) {
         let due = {
             let st = state().lock().unwrap();
@@ -196,6 +202,17 @@ fn ticker(stop: Arc<AtomicBool>) {
         };
         if due {
             stop_block("time is up");
+        }
+        // Keep the round's apps closed: anything reopened is closed again within a few seconds.
+        tick += 1;
+        if tick % 3 == 0 {
+            let close = {
+                let st = state().lock().unwrap();
+                if st.saved.until > now() { st.saved.apps.clone() } else { vec![] }
+            };
+            if !close.is_empty() {
+                kill_by_name(&close);
+            }
         }
         thread::sleep(Duration::from_secs(1));
     }
@@ -209,18 +226,6 @@ struct Proc {
     name: String,
     path: String,
 }
-
-/// Folders games are installed into by the big launchers.
-const GAME_DIRS: &[&str] = &[
-    "\\steamapps\\common\\",
-    "\\epic games\\",
-    "\\riot games\\",
-    "\\battle.net\\",
-    "\\ea games\\",
-    "\\ubisoft game launcher\\games\\",
-    "\\xboxgames\\",
-    "\\gog galaxy\\games\\",
-];
 
 /// Launchers and helpers that live in those folders but aren't games.
 const NOT_GAMES: &[&str] = &[
@@ -243,7 +248,7 @@ fn running_games() -> Vec<Proc> {
         let path = exe.to_string_lossy().to_string();
         let low = path.to_lowercase();
         let name = p.name().to_string_lossy().to_string();
-        if GAME_DIRS.iter().any(|d| low.contains(d)) && !NOT_GAMES.contains(&name.to_lowercase().as_str()) {
+        if apps::GAME_DIRS.iter().any(|d| low.contains(d)) && !NOT_GAMES.contains(&name.to_lowercase().as_str()) {
             out.push(Proc { pid: pid.as_u32(), name, path });
         }
     }
@@ -277,7 +282,14 @@ fn kill_by_name(names: &[String]) -> Vec<Proc> {
 #[serde(tag = "cmd", rename_all = "snake_case")]
 enum Req {
     Status,
-    Block { hosts: Vec<String>, minutes: f64 },
+    Block {
+        hosts: Vec<String>,
+        minutes: f64,
+        /// Programs to keep closed during the round.
+        #[serde(default)]
+        apps: Vec<String>,
+    },
+    Apps,
     Unblock,
     Kill { names: Vec<String> },
     Games,
@@ -302,7 +314,8 @@ fn handle(req: Req) -> serde_json::Value {
                 "hostsOk": !blocking || hosts::has_block(),
             })
         }
-        Req::Block { hosts, minutes } => match start_block(&hosts, minutes) {
+        Req::Apps => json!({ "ok": true, "apps": apps::installed() }),
+        Req::Block { hosts, minutes, apps } => match start_block(&hosts, minutes, &apps) {
             Ok(s) => json!({ "ok": true, "hosts": s.hosts, "secondsLeft": s.until.saturating_sub(now()) }),
             Err(e) => json!({ "ok": false, "error": e }),
         },

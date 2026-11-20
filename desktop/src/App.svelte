@@ -4,6 +4,8 @@
   import { CHECK_EVERY_MS, checkAndDownload, installNow, type UpdateState } from "./lib/updates";
   import SiteList from "./lib/SiteList.svelte";
   import { blockedHosts, loadSites } from "./lib/sites";
+  import AppList from "./lib/AppList.svelte";
+  import { buildRows, closedExes, type AppRow, type InstalledApp } from "./lib/apps";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
 
   type Mark = "pass" | "fail" | "";
@@ -133,8 +135,8 @@
       guardMsg = "Switch on at least one site first.";
       return;
     }
-    const r = await call<{ ok: boolean; error?: string }>({ cmd: "block", hosts, minutes });
-    guardMsg = r.ok ? "Blocking. Try a few sites in Chrome and Opera, and try YouTube: search should work, the feed shouldn't." : `Could not block: ${r.error}`;
+    const r = await call<{ ok: boolean; error?: string }>({ cmd: "block", hosts, minutes, apps: closedExes(appRows) });
+    guardMsg = r.ok ? "Blocking. Try a few sites in Chrome and Opera, try YouTube (search works, the feed doesn't), and try opening a game." : `Could not block: ${r.error}`;
     refresh();
   }
 
@@ -144,22 +146,28 @@
     refresh();
   }
 
-  // ---------- games ----------
-  type Proc = { pid: number; name: string; path: string };
-  let games = $state<Proc[] | null>(null);
-  let killName = $state("notepad.exe");
-  let killMsg = $state("");
+  // ---------- apps ----------
+  let installed = $state<InstalledApp[]>([]);
+  let appRows = $state<AppRow[]>(buildRows([]));
+  let appsLoading = $state(false);
+  let appsLoaded = false;
 
-  async function findGames() {
-    const r = await call<{ games: Proc[] }>({ cmd: "games" });
-    games = r.games;
+  async function loadApps() {
+    if (appsLoaded || !guard) return;
+    appsLoaded = true;
+    appsLoading = true;
+    try {
+      const r = await call<{ ok: boolean; apps?: InstalledApp[] }>({ cmd: "apps" });
+      installed = r.apps ?? [];
+      appRows = buildRows(installed);
+    } catch {
+      appsLoaded = false; // older Guard: try again after it's updated
+    }
+    appsLoading = false;
   }
-
-  async function kill(names: string[]) {
-    const r = await call<{ killed: Proc[] }>({ cmd: "kill", names });
-    killMsg = r.killed.length ? `Closed ${r.killed.map((k) => k.name).join(", ")}.` : `Nothing called ${names.join(", ")} was running.`;
-    if (games) findGames();
-  }
+  $effect(() => {
+    if (guard) loadApps();
+  });
 
   // ---------- your results ----------
   const checks = [
@@ -177,12 +185,14 @@
     { id: "defender", group: "Blocking", text: "Windows Security stayed quiet" },
     { id: "unblock", group: "Blocking", text: "Sites came back on their own when time ran out" },
     { id: "page", group: "Blocking", text: "A blocked site showed the \"This can wait\" page" },
-    { id: "kill", group: "Games", text: "Notepad closed from the button" },
-    { id: "game", group: "Games", text: "A real game showed in the list and closed" },
+    { id: "apps-found", group: "Apps", text: "Your games, launchers and Discord showed in the apps list" },
+    { id: "apps-close", group: "Apps", text: "A game on the list closed when you opened it during a round" },
+    { id: "apps-add", group: "Apps", text: "Adding an app from the suggestions worked" },
     { id: "yt-feed", group: "Study YouTube", text: "youtube.com opened with no feed, just search" },
     { id: "yt-search", group: "Study YouTube", text: "A study search worked, and a fun search said \"That search can wait\"" },
     { id: "yt-play", group: "Study YouTube", text: "A lesson or explainer played" },
-    { id: "yt-hold", group: "Study YouTube", text: "A music video or gaming video said \"This can wait\" instead of playing" },
+    { id: "yt-hold", group: "Study YouTube", text: "A gaming or music video opened from search said \"This video can wait\" straight away" },
+    { id: "yt-notif", group: "Study YouTube", text: "Same for a video opened from a channel or a notification" },
     { id: "yt-channel", group: "Study YouTube", text: "A channel's videos and playlists opened" },
     { id: "yt-queue", group: "Study YouTube", text: "A playlist's queue showed beside the video, with no suggestions" },
     { id: "page-center", group: "Blocking", text: "The \"This can wait\" page sat in the middle of the window" },
@@ -353,30 +363,18 @@
     <div class="head">
       <span class="num">3</span>
       <div>
-        <h2>Closing games</h2>
-        <p>The Guard finds games from Steam, Epic, Riot, Battle.net and EA folders and closes them.</p>
+        <h2>Closing apps</h2>
+        <p>Games, game launchers and anything else you pick stay closed for the whole round. Open one and it closes again within a few seconds.</p>
       </div>
     </div>
     {#if guard}
-      <div class="row">
-        <input bind:value={killName} aria-label="Program to close" />
-        <button onclick={() => kill([killName])}>Close it</button>
-        <button class="ghost" onclick={findGames}>Show running games</button>
-      </div>
-      {#if games}
-        {#if games.length}
-          <ul class="games">
-            {#each games as g}<li><span title={g.path}>{g.name}</span><button class="ghost small" onclick={() => kill([g.name])}>Close</button></li>{/each}
-          </ul>
-        {:else}<p>No games running. Start one from Steam or Riot and press the button again.</p>{/if}
-      {/if}
-      {#if killMsg}<p class="msg">{killMsg}</p>{/if}
+      <AppList bind:rows={appRows} {installed} locked={guard.blocking} loading={appsLoading} />
     {:else}<p>Install the Guard in step 2 first.</p>{/if}
   </section>
 
   <section class="results">
     <h2>Your results</h2>
-    {#each ["Camera", "Blocking", "Games", "Study YouTube"] as g}
+    {#each ["Camera", "Blocking", "Study YouTube", "Apps"] as g}
       <h3>{g}</h3>
       <ul class="checks">
         {#each checks.filter((c) => c.group === g) as c}

@@ -198,9 +198,9 @@ pub fn card(heading: &str, lines: &str, seconds_left: u64) -> String {
 :root{{--paper:#f3ead8;--ink:#2c3a2a;--muted:#6b705f;--moss:#4f6b3a;--line:#ddd2bb;color-scheme:light}}
 @media (prefers-color-scheme:dark){{:root{{--paper:#1b211a;--ink:#ece4d2;--muted:#a9a693;--moss:#9cbb7a;--line:#36402f;color-scheme:dark}}}}
 *{{box-sizing:border-box}}
-html,body{{margin:0;height:100%;background:var(--paper)}}
-body{{position:fixed;inset:0;overflow:auto;display:flex;align-items:center;justify-content:center;color:var(--ink);font:17px/1.55 "Segoe UI",system-ui,sans-serif;padding:24px}}
-main{{width:100%;max-width:30rem;margin:auto;text-align:center}}
+html,body{{margin:0;min-height:100%;background:var(--paper)}}
+body{{color:var(--ink);font:17px/1.55 "Segoe UI",system-ui,sans-serif}}
+main{{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(30rem,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;text-align:center}}
 .mark{{display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--moss);margin-bottom:28px}}
 h1{{font:600 clamp(40px,8vw,64px)/1.05 Georgia,"Times New Roman",serif;margin:0 0 18px;letter-spacing:-.01em}}
 p{{margin:0 0 8px;color:var(--muted)}}
