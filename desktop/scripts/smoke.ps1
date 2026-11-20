@@ -79,8 +79,8 @@ $short = curl.exe -s --ssl-no-revoke --max-time 10 -D - -o NUL https://youtu.be/
 Check ($short -match "Location: https://www.youtube.com/watch\?v=dQw4w9WgXcQ") "youtu.be links lead to the checked video page"
 Check ((Yt "/results?search_query=minecraft+hardcore") -match "That search can wait") "a fun search is held back"
 $ss = Yt "/results?search_query=integration+by+parts+lesson"
-# The results can come as plain JSON or as an escaped string (\x22 for quotes).
-$ids = @([regex]::Matches($ss, '(?:"|\\x22)videoId(?:"|\\x22):(?:"|\\x22)([A-Za-z0-9_-]{11})') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
+# Newer result cards name the video contentId instead of videoId.
+$ids = @([regex]::Matches($ss, '"(?:videoId|contentId)":"([A-Za-z0-9_-]{11})"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 5)
 $i = $ss.IndexOf("ytInitialData")
 Write-Host "      results page: $($ss.Length) chars; $(if ($i -ge 0) { $ss.Substring($i, [Math]::Min(160, $ss.Length - $i)) } else { 'no ytInitialData' })"
 Check ($ss -match "lockin-study" -and $ids.Count -ge 3) "a study search shows results ($($ids.Count) videos)"
