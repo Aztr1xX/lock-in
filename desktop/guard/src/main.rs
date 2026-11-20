@@ -26,7 +26,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Release builds stamp the app's version in, so the app can tell when the installed Guard is out of date.
+pub const VERSION: &str = match option_env!("LOCKIN_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 pub const CONTROL_ADDR: &str = "127.0.0.1:47822";
 /// No single block can last longer than this, so a bad request can never lock you out for long.
 const MAX_BLOCK_MIN: f64 = 240.0;

@@ -45,9 +45,9 @@ async fn guard_setup(action: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn about() -> Value {
+fn about(app: tauri::AppHandle) -> Value {
     serde_json::json!({
-        "app": env!("CARGO_PKG_VERSION"),
+        "app": app.package_info().version.to_string(),
         "webview": tauri::webview_version().unwrap_or_else(|_| "unknown".into()),
         "os": std::env::consts::OS,
     })
@@ -118,6 +118,9 @@ fn show_main(app: &tauri::AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
+        // Updates: the app checks GitHub for a newer signed version and installs it itself.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // The camera is allowed for the app's own window without asking every time.
         // The microphone and everything else keep the normal behaviour.
         .on_permission_request(|_, kind| match kind {

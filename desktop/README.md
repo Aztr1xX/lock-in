@@ -13,3 +13,11 @@ GitHub Actions builds the installer on every push that touches this folder
 
 Local development on Windows: `npm install`, build the Guard with `cargo build -p lockin-guard --release`,
 copy it to `src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe`, then `npx tauri dev`.
+
+## Updates
+
+Installed copies check `latest.json` in the public `Aztr1xX/lock-in-releases` repo every
+6 hours, download a newer signed version in the background and offer "Restart to update".
+To ship one: push a tag like `desktop-v0.1.0` (`.github/workflows/desktop-release.yml` does the rest).
+The updater's public key is in `src-tauri/tauri.conf.json`; the private key lives only in the
+`TAURI_SIGNING_PRIVATE_KEY` secret and Ryan's own backup.

@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { CHECK_EVERY_MS, checkAndDownload, installNow, type UpdateState } from "./lib/updates";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
 
   type Mark = "pass" | "fail" | "";
   const inTauri = "__TAURI_INTERNALS__" in window;
 
   let about = $state({ app: "", webview: "", os: "" });
+
+  // ---------- updates ----------
+  let upd = $state<UpdateState>({ kind: "idle" });
+  const checkUpdates = () => checkAndDownload((s) => (upd = s));
 
   // ---------- camera ----------
   let video: HTMLVideoElement;
@@ -148,6 +153,7 @@
         `Camera: ${stats.frames} frames, ${stats.avgMs.toFixed(0)} ms avg, ${stats.maxMs.toFixed(0)} ms max, pose on ${stats.poseDelegate}${stats.error ? `, error ${stats.error}` : ""}`,
       );
     if (camError) lines.push(`Camera error: ${camError}`);
+    if (upd.kind === "error") lines.push(`Update check: ${upd.message}`);
     if (guard) lines.push(`Guard ${guard.version}, sinkhole on ${guard.sinkhole.join(" ") || "none"}, ${guard.attempts.length} attempts seen`);
     for (const c of checks) lines.push(`${marks[c.id] === "pass" ? "PASS" : marks[c.id] === "fail" ? "FAIL" : "not tried"}: ${c.text}`);
     if (note.trim()) lines.push(`Notes: ${note.trim()}`);
@@ -174,14 +180,26 @@
     });
     refresh();
     const t = setInterval(refresh, 2000);
+    let u = 0;
+    if (inTauri) {
+      checkUpdates();
+      u = window.setInterval(checkUpdates, CHECK_EVERY_MS);
+    }
     return () => {
       clearInterval(t);
+      clearInterval(u);
       test?.stop();
     };
   });
 </script>
 
 <main>
+  {#if upd.kind === "ready"}
+    <div class="update">
+      <span>Lock In {upd.version} is ready.</span>
+      <button onclick={installNow}>Restart to update</button>
+    </div>
+  {/if}
   <header>
     <p class="eyebrow">Phase 0 test build {about.app}</p>
     <h1>Three things to prove before we build</h1>
@@ -246,6 +264,9 @@
       <p>The Guard isn't running yet.</p>
       <button onclick={() => setup("install")} disabled={busy}>Install Lock In Guard</button>
     {:else}
+      {#if about.app && guard.version !== about.app}
+        <p class="msg">The Guard is on {guard.version} and the app is on {about.app}. <button class="link" onclick={() => setup("install")} disabled={busy}>Update the Guard</button></p>
+      {/if}
       <p class="ok">Guard {guard.version} is running.{guard.sinkhole.length ? "" : " (Attempt tracking is off: ports 80 and 443 are in use by something else.)"}</p>
       {#if guard.blocking}
         <div class="live">
@@ -312,5 +333,15 @@
     <button onclick={copy}>{copied ? "Copied" : "Copy results"}</button>
   </section>
 
-  <footer>WebView2 {about.webview || "unknown"}. Closing this window hides it to the tray; quit from the tray icon.</footer>
+  <footer>
+    <p>Version {about.app}, WebView2 {about.webview || "unknown"}. Closing this window hides it to the tray; quit from the tray icon.</p>
+    <p>
+      {#if upd.kind === "checking"}Checking for updates...
+      {:else if upd.kind === "downloading"}Downloading {upd.version}, {Math.round(upd.pct * 100)}%
+      {:else if upd.kind === "none"}Up to date.
+      {:else if upd.kind === "error"}Couldn't check for updates.
+      {/if}
+      {#if upd.kind !== "checking" && upd.kind !== "downloading"}<button class="link" onclick={checkUpdates}>Check for updates</button>{/if}
+    </p>
+  </footer>
 </main>
