@@ -1,16 +1,18 @@
 name: Desktop release
 
 # Push a tag like desktop-v0.1.0 to ship an update. This builds a signed installer and
-# publishes it, with latest.json, to the public Aztr1xX/lock-in-releases repo. Every
-# installed copy of Lock In checks that file and updates itself.
+# publishes it, with latest.json, as a release of this repo. Every installed copy of
+# Lock In checks that file and updates itself.
 #
-# Needs two secrets on this repo:
-#   RELEASES_TOKEN             a token that can write to Aztr1xX/lock-in-releases
+# Needs one secret on this repo:
 #   TAURI_SIGNING_PRIVATE_KEY  the updater signing key (keep a backup: losing it breaks updates)
 
 on:
   push:
     tags: ["desktop-v*"]
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -53,13 +55,11 @@ jobs:
       - name: Build, sign and publish
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           projectPath: desktop
-          owner: Aztr1xX
-          repo: lock-in-releases
           tagName: v${{ steps.v.outputs.version }}
           releaseName: Lock In ${{ steps.v.outputs.version }}
           releaseBody: Download the Lock In setup file below and run it. Installed copies update themselves.

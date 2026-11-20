@@ -50,9 +50,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyQzIwMTg5MDFDRjVEMjIKUldRaVhjOEJpUUhDTWw4MlY5TUE1b29UcVNIa3VHOVJ0c01wSlc2V2lIdlJibXJuK09ZR1BiWHMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczNjRBQTMwMDZCMTEwMTIKUldRU0VMRUdNS3BrYzUvSGJISjhCcUhMRHBrQkQ4MEFtalpsWUllUzNRT042WkUxazhYRC9EWWkK",
       "endpoints": [
-        "https://github.com/Aztr1xX/lock-in-releases/releases/latest/download/latest.json"
+        "https://github.com/Aztr1xX/lock-in/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

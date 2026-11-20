@@ -16,7 +16,7 @@ copy it to `src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe`, then `n
 
 ## Updates
 
-Installed copies check `latest.json` in the public `Aztr1xX/lock-in-releases` repo every
+Installed copies check `latest.json` on this repo's latest release every
 6 hours, download a newer signed version in the background and offer "Restart to update".
 To ship one: push a tag like `desktop-v0.1.0` (`.github/workflows/desktop-release.yml` does the rest).
 The updater's public key is in `src-tauri/tauri.conf.json`; the private key lives only in the
