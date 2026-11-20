@@ -32,6 +32,10 @@ pub struct Handles {
 unsafe impl Send for Handles {}
 
 impl Handles {
+    pub fn process_handle(&self) -> std::os::windows::io::RawHandle {
+        self.process.0
+    }
+
     pub fn wait(&mut self) -> Result<u32, String> {
         unsafe {
             if WaitForSingleObject(self.process, INFINITE) != WAIT_OBJECT_0 {
@@ -52,6 +56,16 @@ impl Drop for Handles {
             let _ = CloseHandle(self.process);
         }
     }
+}
+
+pub fn cpu_ms(process: Option<std::os::windows::io::RawHandle>) -> Option<f64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let h = process.map(HANDLE).unwrap_or_else(|| unsafe { GetCurrentProcess() });
+    let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+    unsafe { GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u).ok()? };
+    let ms = |f: FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64 / 10_000.0;
+    Some(ms(k) + ms(u))
 }
 
 /// The container's SID, creating its profile the first time.

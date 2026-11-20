@@ -31,12 +31,36 @@ mod win;
 #[cfg(windows)]
 pub use win::spawn;
 
+/// CPU time a process has used so far (user plus kernel), in milliseconds. Pass `None` for the
+/// calling process itself.
+#[cfg(windows)]
+pub fn cpu_ms(process: Option<std::os::windows::io::RawHandle>) -> Option<f64> {
+    win::cpu_ms(process)
+}
+
+#[cfg(not(windows))]
+pub fn cpu_ms(_process: Option<()>) -> Option<f64> {
+    None
+}
+
 #[cfg(not(windows))]
 pub fn spawn(_exe: &Path, _args: &[&str], _grant: &Path) -> Result<Sandboxed, String> {
     Err("the sandbox is Windows-only".into())
 }
 
 impl Sandboxed {
+    /// CPU time the sandboxed process has used so far, in milliseconds.
+    pub fn cpu_ms(&self) -> Option<f64> {
+        #[cfg(windows)]
+        {
+            win::cpu_ms(Some(self.inner.process_handle()))
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+
     /// Waits for the process to end and returns its exit code.
     pub fn wait(&mut self) -> Result<u32, String> {
         #[cfg(windows)]

@@ -80,6 +80,22 @@ pub struct Camera {
     width: u32,
     height: u32,
     stride: i32,
+    latest: Option<IMFSample>,
+}
+
+/// Shuts the camera down from another thread, which also wakes a read that is waiting for a
+/// frame that will never come.
+pub struct Shutdown(IMFMediaSource);
+
+// Media sources live in the multithreaded apartment, and Shutdown may be called from any thread.
+unsafe impl Send for Shutdown {}
+
+impl crate::Stopper for Shutdown {
+    fn stop(&self) {
+        unsafe {
+            let _ = self.0.Shutdown();
+        }
+    }
 }
 
 fn split(v: u64) -> (u32, u32) {
@@ -110,7 +126,7 @@ impl Camera {
                     return Err(CaptureError::Busy(e.message().to_string()));
                 }
             };
-            let mut cam = Camera { source, reader, width: 0, height: 0, stride: 0 };
+            let mut cam = Camera { source, reader, width: 0, height: 0, stride: 0, latest: None };
             cam.configure(width, height)?;
             Ok(cam)
         }
@@ -132,7 +148,7 @@ impl Camera {
             let fps = t.GetUINT64(&MF_MT_FRAME_RATE).map(|v| {
                 let (n, d) = split(v);
                 n as f64 / d.max(1) as f64
-            });
+            }).ok();
             let sub = t.GetGUID(&MF_MT_SUBTYPE).unwrap_or_default();
             let area = (w * h) as f64;
             let mut score = (area - want).abs() / want;
@@ -142,6 +158,8 @@ impl Camera {
             if fps.map(|f| f < 14.5).unwrap_or(false) {
                 score += 1.0;
             }
+            // Every frame is read (see stream.rs), so beyond 15 a second more only costs CPU.
+            score += fps.map(|f| ((f - 15.0).max(0.0) / 15.0) * 0.1).unwrap_or(0.0);
             if sub == MFVideoFormat_MJPG {
                 score += 0.3; // decoding JPEG costs CPU
             }
@@ -173,8 +191,21 @@ impl Camera {
         (self.width, self.height)
     }
 
+    /// Something that can shut this camera down from another thread.
+    pub fn shutdown_handle(&self) -> Shutdown {
+        Shutdown(self.source.clone())
+    }
+
     /// Waits for the next frame and returns it as RGB.
     pub fn frame(&mut self) -> Result<Frame, CaptureError> {
+        crate::Source::grab(self)?;
+        crate::Source::latest(self)
+    }
+}
+
+impl crate::Source for Camera {
+    /// Waits for the next frame and keeps it, without converting it.
+    fn grab(&mut self) -> Result<(), CaptureError> {
         unsafe {
             loop {
                 let mut flags = 0u32;
@@ -190,10 +221,21 @@ impl Camera {
                     self.read_size()?;
                 }
                 let Some(sample) = sample else { continue }; // a gap in the stream, not a frame
-                return self.convert(&sample);
+                self.latest = Some(sample);
+                return Ok(());
             }
         }
     }
+
+    fn latest(&self) -> Result<Frame, CaptureError> {
+        match &self.latest {
+            Some(s) => unsafe { self.convert(s) },
+            None => Err(CaptureError::Frozen),
+        }
+    }
+}
+
+impl Camera {
 
     unsafe fn convert(&self, sample: &IMFSample) -> Result<Frame, CaptureError> {
         let (w, h) = (self.width as usize, self.height as usize);

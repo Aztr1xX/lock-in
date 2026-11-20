@@ -39,8 +39,10 @@ impl Frame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CaptureError {
+    /// The camera is open but no new picture has arrived for a while.
+    Frozen,
     /// No camera with that id is plugged in.
     NotFound,
     /// Another app has the camera to itself, or Windows' privacy settings block it.
@@ -52,11 +54,28 @@ impl std::fmt::Display for CaptureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CaptureError::NotFound => write!(f, "That camera isn't plugged in"),
+            CaptureError::Frozen => write!(f, "The camera stopped sending pictures"),
             CaptureError::Busy(e) => write!(f, "The camera is in use by another app or blocked in Windows privacy settings ({e})"),
             CaptureError::Other(e) => write!(f, "{e}"),
         }
     }
 }
+
+/// Something that delivers camera frames: the real camera, or a stand-in in tests.
+pub trait Source {
+    /// Waits for the next frame and keeps it.
+    fn grab(&mut self) -> Result<(), CaptureError>;
+    /// The frame kept by the last grab, as RGB.
+    fn latest(&self) -> Result<Frame, CaptureError>;
+}
+
+/// Stops a source from another thread.
+pub trait Stopper: Send {
+    fn stop(&self);
+}
+
+mod stream;
+pub use stream::Stream;
 
 #[cfg(windows)]
 mod mf;
@@ -79,6 +98,14 @@ mod other {
         }
         pub fn size(&self) -> (u32, u32) {
             (0, 0)
+        }
+    }
+    impl Source for Camera {
+        fn grab(&mut self) -> Result<(), CaptureError> {
+            Err(CaptureError::NotFound)
+        }
+        fn latest(&self) -> Result<Frame, CaptureError> {
+            Err(CaptureError::NotFound)
         }
     }
 }

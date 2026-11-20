@@ -44,6 +44,8 @@ jobs:
         run: ./scripts/camera-assets.ps1
       - name: Camera worker unit tests
         run: cargo test -p lockin-camera
+      - name: Camera capture, sandbox and live-check rules unit tests
+        run: cargo test -p lockin-capture -p lockin-sandbox -p lockin-live
       - name: Camera worker has no networking code
         shell: pwsh
         run: ./scripts/check-camera-deps.ps1
