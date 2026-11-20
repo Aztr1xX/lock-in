@@ -118,7 +118,11 @@ $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check (-not ($hosts -match "Lock In")) "block ended on time and the hosts file is clean"
 $doh = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name DnsOverHttpsMode -ErrorAction SilentlyContinue
 Check (-not $doh) "Chrome secure DNS setting removed"
-$ca = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Lock In focus round*" }
+for ($i = 0; $i -lt 15; $i++) {
+  $ca = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Lock In focus round*" }
+  if (@($ca).Count -eq 0) { break }
+  Start-Sleep -Seconds 1
+}
 Check (@($ca).Count -eq 0) "the round certificate is gone"
 netsh advfirewall firewall show rule name=LockInFocusRound | Out-Null
 Check ($LASTEXITCODE -ne 0) "firewall rule removed"
