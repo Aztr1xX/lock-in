@@ -195,7 +195,7 @@ fn category_of(id: &str) -> (String, String) {
 
 /// Decides whether a video plays. The uploader's category decides when it's known. When it
 /// isn't, the title and description have to read as study and not as entertainment.
-pub fn judge_video(v: &mut Video, allow_channels: &[String]) {
+pub fn judge_video(v: &mut Video, allow_channels: &[String], query: &str) {
     if !v.channel_id.is_empty() && allow_channels.contains(&v.channel_id) {
         v.allowed = true;
         v.basis = "channel".into();
@@ -204,7 +204,16 @@ pub fn judge_video(v: &mut Video, allow_channels: &[String]) {
         v.basis = "category".into();
     } else {
         let words = format!("{} {}", v.title, v.snippet);
-        v.allowed = has_any(&words, STUDY) && !has_any(&v.title, FUN);
+        // A topic word from the search (like "alkene") counts as much as a study word.
+        let topic: Vec<String> = query
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() >= 4 && !FUN.contains(w))
+            .map(|w| w.trim_end_matches('s').to_string())
+            .collect();
+        let lower = words.to_lowercase();
+        let on_topic = topic.iter().any(|w| lower.contains(w.as_str()));
+        v.allowed = (has_any(&words, STUDY) || on_topic) && !has_any(&v.title, FUN);
         v.basis = "title".into();
     }
 }
@@ -239,7 +248,7 @@ pub fn search(q: &str, allow_channels: &[String]) -> Result<(String, Vec<Video>)
     }).collect();
     for (v, h) in videos.iter_mut().zip(handles) {
         (v.category, v.problem) = h.join().unwrap_or_default();
-        judge_video(v, allow_channels);
+        judge_video(v, allow_channels, q);
     }
     Ok((verdict.into(), videos))
 }
@@ -272,16 +281,22 @@ mod tests {
     #[test]
     fn judges_videos_without_a_category() {
         let mut v = Video { title: "Alkene Addition Reactions: Crash Course Organic Chemistry #16".into(), channel_id: "UCx".into(), ..Default::default() };
-        judge_video(&mut v, &[]);
+        judge_video(&mut v, &[], "");
         assert!(v.allowed);
         let mut v = Video { title: "Minecraft but chemistry is real".into(), ..Default::default() };
-        judge_video(&mut v, &[]);
+        judge_video(&mut v, &[], "");
         assert!(!v.allowed); // fun word in the title wins
         let mut v = Video { title: "Chemistry lesson".into(), category: "Gaming".into(), ..Default::default() };
-        judge_video(&mut v, &[]);
+        judge_video(&mut v, &[], "");
         assert!(!v.allowed); // a known category decides
         let mut v = Video { title: "My day".into(), channel_id: "UCok".into(), ..Default::default() };
-        judge_video(&mut v, &["UCok".into()]);
+        judge_video(&mut v, &["UCok".into()], "");
         assert!(v.allowed);
+        let mut v = Video { title: "Alkene Reactions".into(), ..Default::default() };
+        judge_video(&mut v, &[], "organic chemistry alkenes");
+        assert!(v.allowed); // on the topic searched for
+        let mut v = Video { title: "Alkene funny moments compilation".into(), ..Default::default() };
+        judge_video(&mut v, &[], "alkenes");
+        assert!(!v.allowed);
     }
 }
