@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Lock In test build",
+        "title": "Lock In (in development)",
         "width": 1040,
         "height": 800,
         "minWidth": 720,

@@ -61,8 +61,8 @@ jobs:
         with:
           projectPath: desktop
           tagName: v${{ steps.v.outputs.version }}
-          releaseName: Lock In ${{ steps.v.outputs.version }}
-          releaseBody: Download the Lock In setup file below and run it. Installed copies update themselves.
+          releaseName: Lock In ${{ steps.v.outputs.version }} (in development)
+          releaseBody: "In development: an early test build, password protected. Download the setup file below and run it; installed copies update themselves."
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

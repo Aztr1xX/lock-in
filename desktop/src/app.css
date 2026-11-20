@@ -83,3 +83,7 @@ footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 2
 .update { display: flex; gap: 14px; align-items: center; justify-content: space-between; padding: 12px 16px; margin-bottom: 20px; border-radius: 10px; background: var(--moss); color: var(--card); }
 .update button { background: var(--card); color: var(--moss); }
 footer p { margin: 4px 0; }
+.devbar { position: sticky; top: 0; z-index: 10; padding: 7px 16px; text-align: center; font-size: 13px; font-weight: 600; background: var(--clay); color: var(--card); }
+.gate { min-height: calc(100vh - 34px); display: grid; place-items: center; }
+.gate form { width: min(340px, 100%); display: grid; gap: 10px; }
+.gate input { font-size: 18px; letter-spacing: 0.1em; }

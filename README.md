@@ -1,5 +1,7 @@
 # Lock In
 
+> **In development.** A personal project, not a finished app. The desktop builds are password protected.
+
 A study focus app. Open it, press **Start**, study.
 
 - `src/` – the web app (Vite + TypeScript, React code built with Preact). Everything is saved in the browser on your PC.
