@@ -30,6 +30,10 @@ pub enum Family {
     Rfdetr,
     Dfine,
     Yolo26,
+    /// YOLOX (Megvii, Apache 2.0): anchor-free grid head, letterboxed BGR input.
+    Yolox,
+    /// NanoDet-Plus (Apache 2.0): GFL distribution head, stretched BGR input.
+    Nanodet,
     Rtmpose,
 }
 
@@ -91,12 +95,24 @@ const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 const POSE_MEAN: [f32; 3] = [123.675, 116.28, 103.53];
 const POSE_STD: [f32; 3] = [58.395, 57.12, 57.375];
+/// NanoDet normalises in BGR order; these are indexed by RGB channel.
+const NANODET_MEAN: [f32; 3] = [123.675, 116.28, 103.53];
+const NANODET_STD: [f32; 3] = [58.395, 57.12, 57.375];
 
 /// Scales a picture with SIMD bilinear filtering that averages over the whole source area, the
 /// way the models' own (antialiased) resizing does. About ten times faster than `image`'s.
 fn resize(src: &RgbImage, w: u32, h: u32) -> RgbImage {
     let mut dst = RgbImage::new(w, h);
     let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+    Resizer::new().resize(src, &mut dst, &opts).expect("RGB to RGB resize cannot fail");
+    dst
+}
+
+/// Plain bilinear sampling without averaging, like OpenCV's INTER_LINEAR, which is what the
+/// YOLOX and NanoDet pipelines resize with.
+fn resize_linear(src: &RgbImage, w: u32, h: u32) -> RgbImage {
+    let mut dst = RgbImage::new(w, h);
+    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Interpolation(FilterType::Bilinear));
     Resizer::new().resize(src, &mut dst, &opts).expect("RGB to RGB resize cannot fail");
     dst
 }
@@ -140,8 +156,37 @@ pub fn prepare_detector(frame: &RgbImage, m: &ModelInfo) -> Prepared {
             let data = to_nchw(&canvas, |_, v| v / 255.0);
             Prepared { data, shape, map: Mapping::Letterbox { r, pad_x: px as f32, pad_y: py as f32 } }
         }
+        Family::Yolox => {
+            // Scaled to fit and placed in the top-left corner, grey padding, BGR, 0 to 255.
+            let r = (w as f32 / fw as f32).min(h as f32 / fh as f32);
+            let (nw, nh) = (((fw as f32 * r) as u32).clamp(1, w), ((fh as f32 * r) as u32).clamp(1, h));
+            let scaled = resize_linear(frame, nw, nh);
+            let mut canvas = RgbImage::from_pixel(w, h, image::Rgb([114, 114, 114]));
+            imageops::replace(&mut canvas, &scaled, 0, 0);
+            let data = to_nchw_bgr(&canvas, |_, v| v);
+            Prepared { data, shape, map: Mapping::Letterbox { r, pad_x: 0.0, pad_y: 0.0 } }
+        }
+        Family::Nanodet => {
+            let img = resize_linear(frame, w, h);
+            let data = to_nchw_bgr(&img, |c, v| (v - NANODET_MEAN[c]) / NANODET_STD[c]);
+            Prepared { data, shape, map: Mapping::Stretch { w: fw as f32, h: fh as f32 } }
+        }
         Family::Rtmpose => unreachable!("the pose model needs a person box"),
     }
+}
+
+/// Like `to_nchw`, but the planes go blue, green, red (OpenCV's order). `f` still gets the RGB
+/// channel index.
+fn to_nchw_bgr(img: &RgbImage, f: impl Fn(usize, f32) -> f32) -> Vec<f32> {
+    let (w, h) = img.dimensions();
+    let plane = (w * h) as usize;
+    let mut out = vec![0f32; plane * 3];
+    for (i, px) in img.pixels().enumerate() {
+        for c in 0..3 {
+            out[(2 - c) * plane + i] = f(c, px.0[c] as f32);
+        }
+    }
+    out
 }
 
 /// Cuts out the area around a person box for the pose model, the way RTMPose was trained:
@@ -268,10 +313,111 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
                 }
             }
         }
+        Family::Yolox => {
+            // One row per grid cell over strides 8, 16 and 32: cx, cy, w, h as offsets from the
+            // cell, objectness, then 80 class scores (already squashed to 0..1).
+            let Some(o) = outs.first() else { return found };
+            let cols = *o.shape.last().unwrap();
+            let classes = cols.saturating_sub(5);
+            let (iw, ih) = (m.width as usize, m.height as usize);
+            let mut row = 0;
+            for stride in [8usize, 16, 32] {
+                let (gw, gh) = (iw / stride, ih / stride);
+                for gy in 0..gh {
+                    for gx in 0..gw {
+                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else { return nms(found, 0.45) };
+                        row += 1;
+                        let obj = r[4];
+                        if obj < min_score {
+                            continue;
+                        }
+                        let s = stride as f32;
+                        let (cx, cy) = ((r[0] + gx as f32) * s, (r[1] + gy as f32) * s);
+                        let (bw, bh) = (r[2].exp() * s, r[3].exp() * s);
+                        let b = to_frame(map, [cx - bw / 2.0, cy - bh / 2.0, cx + bw / 2.0, cy + bh / 2.0], false);
+                        for k in 0..classes {
+                            let score = obj * r[5 + k];
+                            if score >= min_score {
+                                if let Some(cls) = class_name(m.family, k, coco80) {
+                                    found.push(Detection { cls, score, box_: b });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return nms(found, 0.45);
+        }
+        Family::Nanodet => {
+            // One row per centre point over strides 8, 16, 32 and 64: 80 class scores, then
+            // for each side (left, top, right, bottom) 8 logits over distances 0..7 strides.
+            let Some(o) = outs.first() else { return found };
+            let cols = *o.shape.last().unwrap();
+            let bins = 8;
+            let classes = cols.saturating_sub(4 * bins);
+            let (iw, ih) = (m.width as f32, m.height as f32);
+            let mut row = 0;
+            for stride in [8usize, 16, 32, 64] {
+                let (gw, gh) = ((m.width as usize).div_ceil(stride), (m.height as usize).div_ceil(stride));
+                for gy in 0..gh {
+                    for gx in 0..gw {
+                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else { return nms(found, 0.6) };
+                        row += 1;
+                        let best = r[..classes].iter().fold(0f32, |a, &b| a.max(b));
+                        if best < min_score {
+                            continue;
+                        }
+                        let s = stride as f32;
+                        let (px, py) = (gx as f32 * s, gy as f32 * s);
+                        let d: [f32; 4] = std::array::from_fn(|side| expected_bin(&r[classes + side * bins..classes + (side + 1) * bins]) * s);
+                        let b = [
+                            (px - d[0]).clamp(0.0, iw) / iw,
+                            (py - d[1]).clamp(0.0, ih) / ih,
+                            (px + d[2]).clamp(0.0, iw) / iw,
+                            (py + d[3]).clamp(0.0, ih) / ih,
+                        ];
+                        let b = to_frame(map, b, true);
+                        for (k, &score) in r[..classes].iter().enumerate() {
+                            if score >= min_score {
+                                if let Some(cls) = class_name(m.family, k, coco80) {
+                                    found.push(Detection { cls, score, box_: b });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return nms(found, 0.6);
+        }
         Family::Rtmpose => {}
     }
     found.sort_by(|a, b| b.score.total_cmp(&a.score));
     found
+}
+
+/// The expected value of a softmax over distance bins 0, 1, 2, ...
+fn expected_bin(logits: &[f32]) -> f32 {
+    let max = logits.iter().fold(f32::MIN, |a, &b| a.max(b));
+    let (mut sum, mut weighted) = (0f32, 0f32);
+    for (i, &l) in logits.iter().enumerate() {
+        let e = (l - max).exp();
+        sum += e;
+        weighted += e * i as f32;
+    }
+    weighted / sum
+}
+
+/// Keeps the best box of each overlapping group, class by class, the way the grid detectors'
+/// own pipelines do. Returns them best first.
+fn nms(mut found: Vec<Detection>, threshold: f32) -> Vec<Detection> {
+    found.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut kept: Vec<Detection> = Vec::new();
+    for d in found {
+        if !kept.iter().any(|k| k.cls == d.cls && iou(k.box_, d.box_) > threshold) {
+            kept.push(d);
+        }
+    }
+    kept
 }
 
 /// Reads RTMPose's answer: for each of the 17 points, the most likely column and row
@@ -368,5 +514,21 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].cls, "c0");
         assert!(d[0].box_.iter().zip([40.0, 60.0, 60.0, 140.0]).all(|(a, e)| (a - e).abs() < 1e-3));
+    }
+
+    #[test]
+    fn grid_detectors_keep_one_box_per_object() {
+        let d = |cls: &str, score: f32, x: f32| Detection { cls: cls.into(), score, box_: [x, 0.0, x + 100.0, 100.0] };
+        let kept = nms(vec![d("person", 0.6, 5.0), d("person", 0.9, 0.0), d("cup", 0.5, 0.0), d("person", 0.7, 300.0)], 0.45);
+        let got: Vec<(&str, f32)> = kept.iter().map(|k| (k.cls.as_str(), k.score)).collect();
+        assert_eq!(got, vec![("person", 0.9), ("person", 0.7), ("cup", 0.5)]);
+        assert!((expected_bin(&[0.0, 0.0]) - 0.5).abs() < 1e-6);
+        assert!((expected_bin(&[-50.0, -50.0, 10.0]) - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn bgr_planes() {
+        let img = RgbImage::from_pixel(1, 1, image::Rgb([10, 20, 30]));
+        assert_eq!(to_nchw_bgr(&img, |_, v| v), vec![30.0, 20.0, 10.0]);
     }
 }

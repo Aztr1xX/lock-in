@@ -11,8 +11,10 @@ Writes into OUT_DIR:
                   prove its own resizing and decoding give the same answers
   bus.jpg         the test picture (from the ultralytics package; only used by CI, never shipped)
 
-Licences: RF-DETR Nano, D-FINE Nano and RTMPose-s are Apache 2.0. YOLO26n is AGPL-3.0 and is only
-here to be timed against the others; it must not end up in a shipped detector.
+Licences: RF-DETR Nano, D-FINE Nano, YOLOX, NanoDet-Plus and RTMPose-s are Apache 2.0. YOLO26n is
+AGPL-3.0 and is only here to be timed against the others; it must not end up in a shipped detector.
+
+Models marked timing_only are timed in CI but left out of the app, to keep the installer small.
 """
 
 import hashlib
@@ -26,6 +28,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 from PIL import Image
 
 OUT = Path(sys.argv[1]).resolve()
@@ -121,7 +124,7 @@ def rfdetr():
 
     q = TMP / "rfdetr-n-384-int8.onnx"
     quantize_dynamic(OUT / "rfdetr-n-384.onnx", q, weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul"])
-    add("rfdetr-n-384-int8", q, "rfdetr", 384, "RF-DETR Nano, 8-bit", "Apache-2.0", cpu_only=True)
+    add("rfdetr-n-384-int8", q, "rfdetr", 384, "RF-DETR Nano, 8-bit", "Apache-2.0", cpu_only=True, timing_only=True)
 
 
 @step("D-FINE Nano")
@@ -161,10 +164,14 @@ def dfine():
 
         slim = TMP / f"dfine{size}-slim.onnx"
         onnxslim.slim(str(path), str(slim))
-        add(f"dfine-n-{size}", slim, "dfine", size, "D-FINE Nano", "Apache-2.0")
+        # Three times over the time budget on GitHub's CPU (first CI run), so CI-only from now on.
+        add(f"dfine-n-{size}", slim, "dfine", size, "D-FINE Nano", "Apache-2.0", timing_only=True)
 
     proc = AutoImageProcessor.from_pretrained(repo)
-    inputs = proc(images=BUS, return_tensors="pt", size={"height": 416, "width": 416})
+    # Set on the processor itself: passed as an argument, some versions keep their own 640 px.
+    proc.size = {"height": 416, "width": 416}
+    inputs = proc(images=BUS, return_tensors="pt")
+    assert tuple(inputs["pixel_values"].shape[-2:]) == (416, 416), inputs["pixel_values"].shape
     with torch.no_grad():
         out = model(**inputs)
     res = proc.post_process_object_detection(out, target_sizes=[(BUS.height, BUS.width)], threshold=0.3)[0]
@@ -188,6 +195,119 @@ def yolo():
     reference["yolo26n-416"] = dets(
         (r.names[int(c)], s, b) for c, s, b in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())
     )
+
+
+# ---------- Apache 2.0 CNN detectors with ready-made ONNX files on GitHub ----------
+# Both official demos read pictures with OpenCV (BGR) and resize with INTER_LINEAR.
+import cv2  # noqa: E402
+
+BUS_BGR = cv2.imread(str(bus))
+
+
+def fetch(url: str) -> Path:
+    dst = TMP / url.rsplit("/", 1)[1]
+    urllib.request.urlretrieve(url, dst)
+    return dst
+
+
+def nms(boxes, scores, thr):
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size:
+        i = order[0]
+        keep.append(i)
+        rest = order[1:]
+        xx1 = np.maximum(boxes[i, 0], boxes[rest, 0])
+        yy1 = np.maximum(boxes[i, 1], boxes[rest, 1])
+        xx2 = np.minimum(boxes[i, 2], boxes[rest, 2])
+        yy2 = np.minimum(boxes[i, 3], boxes[rest, 3])
+        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+        area = lambda b: (b[..., 2] - b[..., 0]) * (b[..., 3] - b[..., 1])  # noqa: E731
+        order = rest[inter / (area(boxes[i]) + area(boxes[rest]) - inter) <= thr]
+    return keep
+
+
+def multiclass_nms(boxes, scores, nms_thr, score_thr=0.3):
+    """Class-by-class NMS, as in YOLOX's demo utils and NanoDet's post-processing."""
+    out = []
+    for c in range(scores.shape[1]):
+        m = scores[:, c] > score_thr
+        if m.any():
+            b, s = boxes[m], scores[m, c]
+            out += [(COCO80[c], s[k], b[k]) for k in nms(b, s, nms_thr)]
+    return out
+
+
+def run_onnx(path: Path, x: np.ndarray) -> np.ndarray:
+    s = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    return s.run(None, {s.get_inputs()[0].name: x})[0][0]
+
+
+YOLOX_URL = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_{}.onnx"
+
+
+@step("YOLOX Nano and Tiny")
+def yolox():
+    for name, label, extra in (("nano", "YOLOX Nano", {}), ("tiny", "YOLOX Tiny", {"timing_only": True})):
+        add(f"yolox-{name}-416", fetch(YOLOX_URL.format(name)), "yolox", 416, label, "Apache-2.0", **extra)
+        # Reference: YOLOX's own demo (demo/ONNXRuntime): preproc, demo_postprocess, multiclass_nms.
+        H = W = 416
+        r = min(H / BUS_BGR.shape[0], W / BUS_BGR.shape[1])
+        pad = np.full((H, W, 3), 114, np.uint8)
+        rs = cv2.resize(BUS_BGR, (int(BUS_BGR.shape[1] * r), int(BUS_BGR.shape[0] * r)), interpolation=cv2.INTER_LINEAR)
+        pad[: rs.shape[0], : rs.shape[1]] = rs
+        o = run_onnx(OUT / f"yolox-{name}-416.onnx", np.ascontiguousarray(pad.transpose(2, 0, 1), np.float32)[None])
+        grids, strides = [], []
+        for st in (8, 16, 32):
+            xv, yv = np.meshgrid(np.arange(W // st), np.arange(H // st))
+            g = np.stack((xv, yv), 2).reshape(-1, 2)
+            grids.append(g)
+            strides.append(np.full((g.shape[0], 1), st))
+        g, st = np.concatenate(grids), np.concatenate(strides)
+        o[:, :2] = (o[:, :2] + g) * st
+        o[:, 2:4] = np.exp(o[:, 2:4]) * st
+        b = o[:, :4]
+        xyxy = np.stack([b[:, 0] - b[:, 2] / 2, b[:, 1] - b[:, 3] / 2, b[:, 0] + b[:, 2] / 2, b[:, 1] + b[:, 3] / 2], 1) / r
+        reference[f"yolox-{name}-416"] = dets(multiclass_nms(xyxy, o[:, 4:5] * o[:, 5:], 0.45))
+
+
+NANODET_URL = "https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-plus-{}_{}.onnx"
+
+
+@step("NanoDet-Plus")
+def nanodet():
+    import onnx
+
+    for name, key, label in (("m", "m", "NanoDet-Plus"), ("m-1.5x", "m15", "NanoDet-Plus 1.5x")):
+        for size in (416, 320):
+            src = fetch(NANODET_URL.format(name, size))
+            # The file lists its weights as graph inputs too, which stops ONNX Runtime from folding
+            # them (about a third slower); drop them from the inputs.
+            m = onnx.load(str(src))
+            weights = {i.name for i in m.graph.initializer}
+            keep = [i for i in m.graph.input if i.name not in weights]
+            del m.graph.input[:]
+            m.graph.input.extend(keep)
+            onnx.save(m, str(src))
+            add(f"nanodet-{key}-{size}", src, "nanodet", size, label, "Apache-2.0")
+        # Reference: NanoDet's pipeline for these configs (keep_ratio False, BGR mean/std,
+        # GFL heads with reg_max 7 over strides 8, 16, 32, 64, NMS 0.6).
+        H = W = 416
+        x = cv2.resize(BUS_BGR, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        x = (x - np.array([103.53, 116.28, 123.675], np.float32)) / np.array([57.375, 57.12, 58.395], np.float32)
+        o = run_onnx(OUT / f"nanodet-{key}-416.onnx", np.ascontiguousarray(x.transpose(2, 0, 1))[None])
+        pri = []
+        for st in (8, 16, 32, 64):
+            h, w = -(-H // st), -(-W // st)
+            yy, xx = np.meshgrid(np.arange(h) * st, np.arange(w) * st, indexing="ij")
+            pri.append(np.stack([xx.ravel(), yy.ravel(), np.full(h * w, st)], 1))
+        pri = np.concatenate(pri).astype(np.float32)
+        cls, reg = o[:, :80], o[:, 80:].reshape(-1, 4, 8)
+        e = np.exp(reg - reg.max(-1, keepdims=True))
+        d = (e / e.sum(-1, keepdims=True) * np.arange(8)).sum(-1) * pri[:, 2:3]
+        b = np.stack([pri[:, 0] - d[:, 0], pri[:, 1] - d[:, 1], pri[:, 0] + d[:, 2], pri[:, 1] + d[:, 3]], 1)
+        b = np.clip(b, 0, [W, H, W, H]) * np.array([BUS_BGR.shape[1] / W, BUS_BGR.shape[0] / H] * 2)
+        reference[f"nanodet-{key}-416"] = dets(multiclass_nms(b, cls, 0.6))
 
 
 @step("RTMPose-s")
@@ -219,7 +339,6 @@ def rtmpose():
 
 
 # Every model must open and run in ONNX Runtime on the CPU, the way the app will use it.
-import onnxruntime as ort  # noqa: E402
 
 for m in models:
     try:
@@ -239,6 +358,10 @@ checks = [
     dict(name="RF-DETR Nano, 8-bit", frame="rfdetr-n-384-int8", hands="rfdetr-n-384-int8", pose="rtmpose-s"),
     dict(name="D-FINE Nano", frame="dfine-n-416", hands="dfine-n-320", pose="rtmpose-s"),
     dict(name="YOLO26n", frame="yolo26n-416", hands="yolo26n-320", pose="rtmpose-s"),
+    dict(name="YOLOX Nano", frame="yolox-nano-416", hands="yolox-nano-416", pose="rtmpose-s"),
+    dict(name="YOLOX Tiny", frame="yolox-tiny-416", hands="yolox-tiny-416", pose="rtmpose-s"),
+    dict(name="NanoDet-Plus", frame="nanodet-m-416", hands="nanodet-m-320", pose="rtmpose-s"),
+    dict(name="NanoDet-Plus 1.5x", frame="nanodet-m15-416", hands="nanodet-m15-320", pose="rtmpose-s"),
 ]
 have = {m["id"] for m in models}
 checks = [c for c in checks if {c["frame"], c["hands"], c["pose"]} <= have]

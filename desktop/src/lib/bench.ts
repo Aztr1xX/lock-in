@@ -28,7 +28,7 @@ export type Outcome = Timing | { error: string };
 export interface ModelResult {
   id: string;
   label: string;
-  family: "rfdetr" | "dfine" | "yolo26" | "rtmpose";
+  family: "rfdetr" | "dfine" | "yolo26" | "yolox" | "nanodet" | "rtmpose";
   width: number;
   height: number;
   mb: number;
