@@ -87,6 +87,20 @@ pub fn apply(sites: &[String]) -> (Vec<String>, Vec<String>) {
     (touched, layers)
 }
 
+/// Creates the browsers' (empty) policy keys once, at install. Chrome and Edge only notice policy
+/// changes straight away if the key already existed when they started; an empty key changes nothing.
+pub fn prepare() {
+    for (_, key) in CHROMIUM {
+        reg::ensure(key);
+    }
+    reg::ensure(FIREFOX);
+}
+
+/// Keys kept even when empty, so browsers keep watching them.
+fn kept(key: &str) -> bool {
+    CHROMIUM.iter().any(|(_, k)| *k == key) || key == FIREFOX
+}
+
 /// Removes everything `apply` added.
 pub fn clear(touched: &[String]) {
     reg::remove(touched);
@@ -190,6 +204,10 @@ mod reg {
         ok
     }
 
+    pub fn ensure(key: &str) {
+        let _ = hklm().create_subkey(key);
+    }
+
     /// Deletes the values we added, then any key left completely empty, deepest first.
     pub fn remove(touched: &[String]) {
         let mut keys: Vec<&str> = vec![];
@@ -206,7 +224,7 @@ mod reg {
         let mut all: Vec<String> = vec![];
         for key in keys {
             let mut k = key.to_string();
-            while k.len() > r"SOFTWARE\Policies".len() && k.starts_with(r"SOFTWARE\Policies\") {
+            while k.len() > r"SOFTWARE\Policies".len() && k.starts_with(r"SOFTWARE\Policies\") && !super::kept(&k) {
                 if !all.contains(&k) {
                     all.push(k.clone());
                 }
@@ -241,6 +259,7 @@ mod reg {
         false
     }
     pub fn remove(_: &[String]) {}
+    pub fn ensure(_: &str) {}
 }
 
 // ---------- open connections ----------

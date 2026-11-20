@@ -29,7 +29,9 @@ jobs:
         run: cargo build -p lockin-guard --release
       - name: Guard smoke test (install, block, close a program, uninstall)
         shell: pwsh
-        run: ./scripts/smoke.ps1
+        run: |
+          Copy-Item guard/windivert/WinDivert.dll, guard/windivert/WinDivert64.sys target/release/
+          ./scripts/smoke.ps1
       - name: Bundle the Guard with the app
         shell: pwsh
         run: Copy-Item target/release/lockin-guard.exe src-tauri/binaries/lockin-guard-x86_64-pc-windows-msvc.exe

@@ -15,6 +15,7 @@
 //!   lockin-guard service     what Windows runs; not for people
 
 mod browsers;
+mod divert;
 mod hosts;
 mod sni;
 
@@ -122,7 +123,10 @@ fn start_block(names: &[String], minutes: f64) -> Result<Saved, String> {
     browsers::clear(&old);
     hosts::write_block(&hosts_names(&list))?;
     hosts::flush_dns();
-    let (touched, layers) = browsers::apply(&list);
+    let (touched, mut layers) = browsers::apply(&list);
+    if divert::start(browsers::bases(&list)) {
+        layers.push("Names".into());
+    }
     let mut st = state().lock().unwrap();
     st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64, touched, layers };
     save(&st.saved);
@@ -138,6 +142,7 @@ fn hosts_names(sites: &[String]) -> Vec<String> {
 }
 
 fn stop_block(why: &str) {
+    divert::stop();
     let touched = std::mem::take(&mut state().lock().unwrap().saved.touched);
     browsers::clear(&touched);
     if let Err(e) = hosts::clear_block() {
@@ -382,6 +387,7 @@ pub fn start_workers() -> Arc<AtomicBool> {
         state().lock().unwrap().saved = saved.clone();
         let _ = hosts::write_block(&hosts_names(&saved.hosts));
         hosts::flush_dns();
+        divert::start(browsers::bases(&saved.hosts));
         log("resumed a block after restart");
     } else {
         state().lock().unwrap().saved = saved;
@@ -532,6 +538,16 @@ mod service {
         if me != dest {
             std::fs::copy(&me, &dest).map_err(|x| format!("copy failed: {x}"))?;
         }
+        // The packet filter driver for the name layer travels with the Guard. If it's in use
+        // (an identical copy is already loaded), keeping the old file is fine.
+        for f in ["WinDivert.dll", "WinDivert64.sys"] {
+            let src = me.with_file_name(f);
+            if src.exists() && src != dir.join(f) {
+                if let Err(x) = std::fs::copy(&src, dir.join(f)) {
+                    log(&format!("could not copy {f}: {x}"));
+                }
+            }
+        }
         let info = ServiceInfo {
             name: NAME.into(),
             display_name: "Lock In Guard".into(),
@@ -551,6 +567,7 @@ mod service {
             }
             None => manager.create_service(&info, access).map_err(e)?,
         };
+        browsers::prepare();
         let _ = svc.set_description("Blocks distracting sites and closes games during Lock In focus rounds.");
         svc.start::<&str>(&[]).map_err(e)?;
         wait_for(&svc, ServiceState::Running);

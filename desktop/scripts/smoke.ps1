@@ -24,7 +24,7 @@ Start-Sleep -Seconds 2
 $st = Guard @{ cmd = "status" }
 Check ($st.ok) "service answers (version $($st.version), sinkhole: $($st.sinkhole -join ' '))"
 
-$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org"); minutes = 0.75 }
+$r = Guard @{ cmd = "block"; hosts = @("example.com", "example.org", "wikipedia.org"); minutes = 1.5 }
 Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.hosts -join ', '))"
 $st = Guard @{ cmd = "status" }
 Check ($st.hostsOk) "hosts section still in place"
@@ -44,6 +44,16 @@ function ChromeDom($url) {
   Start-Process $chrome -ArgumentList "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=$env:TEMP\lockin-chrome", "--dump-dom", $url -RedirectStandardOutput $out -Wait -WindowStyle Hidden
   return (Get-Content $out -Raw -ErrorAction SilentlyContinue) + ""
 }
+Check ($st.layers -contains "Names") "name layer (WinDivert) is on"
+# A browser with its own DNS skips the hosts file. Pretend to be one: connect straight to the real
+# address of a blocked site. Only the name layer can stop this.
+$real = (Resolve-DnsName example.org -Server 8.8.8.8 -Type A -DnsOnly | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
+curl.exe -s --max-time 8 --resolve "example.org:443:$real" https://example.org/ -o direct.html
+Check ($LASTEXITCODE -ne 0) "own-DNS connection to a blocked site is stopped by name ($real, curl exit $LASTEXITCODE)"
+curl.exe -s --max-time 8 https://en.wikipedia.org/ -o wiki.html
+Check ($LASTEXITCODE -ne 0) "a subdomain not in the hosts file is stopped by name (curl exit $LASTEXITCODE)"
+curl.exe -s --max-time 8 -o NUL https://www.iana.org/
+Check ($LASTEXITCODE -eq 0) "other sites still load during the block"
 $hasChrome = Test-Path $chrome
 if ($hasChrome) {
   # en.wikipedia.org isn't in the hosts file, so only the browser policy can stop it.
@@ -84,6 +94,8 @@ Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist")) "C
 Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist")) "Edge policy removed"
 netsh advfirewall firewall show rule name=LockInFocusRound | Out-Null
 Check ($LASTEXITCODE -ne 0) "firewall rule removed"
+curl.exe -s --max-time 8 -o NUL https://en.wikipedia.org/
+Check ($LASTEXITCODE -eq 0) "the subdomain loads again after the block"
 if ($hasChrome) {
   Start-Sleep -Seconds 3
   $domFree = ChromeDom "https://en.wikipedia.org/"

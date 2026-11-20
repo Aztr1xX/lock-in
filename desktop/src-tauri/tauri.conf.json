@@ -38,6 +38,11 @@
     "externalBin": [
       "binaries/lockin-guard"
     ],
+    "resources": {
+      "../guard/windivert/WinDivert.dll": "WinDivert.dll",
+      "../guard/windivert/WinDivert64.sys": "WinDivert64.sys",
+      "../guard/windivert/LICENSE.txt": "WinDivert-LICENSE.txt"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"
