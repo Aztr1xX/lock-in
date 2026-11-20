@@ -26,9 +26,10 @@ interface Props {
   onPopOut: (() => void) | null;
   onCamCheck: () => void;
   garden: GardenState | null;
+  phoneAt?: number;
 }
 
-export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, cam, onCamCheck, onToggleSelf, popped, onPopOut, garden }: Props) {
+export default function Focus({ active, settings, now, sessions, onPause, onResume, onSkipBreak, onFinish, camStatus, cam, onCamCheck, onToggleSelf, popped, onPopOut, garden, phoneAt }: Props) {
   const [ending, setEnding] = useState(false);
   const [ideaShift, setIdeaShift] = useState(0);
   const onBreak = active.phase !== "focus";
@@ -153,7 +154,7 @@ export default function Focus({ active, settings, now, sessions, onPause, onResu
           <div className="mini-goal-bar"><span style={{ width: `${goalPct}%` }} /></div>
           <span>{fmtDur(todayTotal * MIN)} / {fmtDur(settings.dailyGoalMin * MIN)} today</span>
         </div>
-        {garden && <GrowWidget garden={garden} rounds={active.rounds} />}
+        {garden && <GrowWidget garden={garden} rounds={active.rounds} phoneAt={phoneAt} />}
         {pomodoro && (
           <div className="round-dots" aria-label={`${active.rounds} rounds done`}>
             {Array.from({ length: settings.roundsBeforeLong }, (_, i) => (

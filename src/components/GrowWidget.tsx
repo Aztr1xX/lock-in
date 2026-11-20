@@ -5,21 +5,30 @@ import { skyAt, skyVars } from "../lib/sky";
 import Plant from "./Plant";
 import GardenPlant from "./GardenPlant";
 import SeedJar from "./SeedJar";
+import Shrubert, { useShrubMood } from "./Shrubert";
 
-/** The plant you're growing right now, live during a session, with the seed jar beside it. */
-export default function GrowWidget({ garden, rounds }: { garden: GardenState; rounds: number }) {
+/** The plant you're growing right now, live during a session, with Shrubert and the seed jar beside it. */
+export default function GrowWidget({ garden, rounds, phoneAt = 0 }: { garden: GardenState; rounds: number; phoneAt?: number }) {
   const { hours, current: cur } = garden;
   const [pop, setPop] = useState(0);
   const [seedPop, setSeedPop] = useState(0);
   const lastRounds = useRef(rounds);
   const lastSeeds = useRef(garden.seeds);
   const sky = skyAt();
+  const shrub = useShrubMood(sky.night);
+  const lastPhone = useRef(phoneAt);
 
   // A finished round makes the plant do a happy little grow.
   useEffect(() => {
-    if (rounds > lastRounds.current) setPop(Date.now());
+    // ...and Shrubert hums along.
+    if (rounds > lastRounds.current) { setPop(Date.now()); shrub.react("hum"); }
     lastRounds.current = rounds;
-  }, [rounds]);
+  }, [rounds, shrub.react]);
+  // The camera spotted your phone. Shrubert is shocked.
+  useEffect(() => {
+    if (phoneAt > lastPhone.current) shrub.react("shocked");
+    lastPhone.current = phoneAt;
+  }, [phoneAt, shrub.react]);
   // Every 25 minutes a seed drops into the jar.
   useEffect(() => {
     if (garden.seeds > lastSeeds.current) setSeedPop(Date.now());
@@ -32,6 +41,7 @@ export default function GrowWidget({ garden, rounds }: { garden: GardenState; ro
 
   return (
     <div className="grow-widget" title="Grows with every focused minute">
+      <span className="grow-shrub"><Shrubert shrub={garden.shrub} mood={shrub.mood} flash={shrub.flash} size={50} /></span>
       <div className={`gw-mini ${pop ? "pop" : ""}`} key={pop} style={skyVars(sky)}>
         {growing ? (
           <Plant stage={plantStage(hours)} hours={hours} size={70} pot={garden.pot} />

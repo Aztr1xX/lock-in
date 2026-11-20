@@ -1061,6 +1061,7 @@ body::after {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15); animation: bubble 2.6s var(--ease) both; pointer-events: none; z-index: 3;
 }
 .gw-bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 12px; height: 12px; translate: -50% 0; rotate: 45deg; background: #fff; }
+.gw-bubble.low { bottom: calc(var(--ground) + 140px); }
 .gw-bubble.heart { bottom: calc(var(--ground) + 150px); animation-duration: 1.6s; }
 .gw-bubble.heart span { color: #ff5d8a; }
 @keyframes bubble { 0% { opacity: 0; transform: translateY(8px) scale(0.9); } 12% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
@@ -1245,3 +1246,51 @@ body::after {
 .un-main b { font-size: 0.9rem; line-height: 1.2; }
 .un-main .growth { width: 100%; height: 5px; }
 .un-left { flex: none; color: var(--muted); font-size: 0.8rem; font-family: var(--mono); }
+
+/* ---------- Shrubert, the garden's little shrub ---------- */
+.shb { display: block; overflow: visible; }
+.shb .shb-all { transform-box: fill-box; transform-origin: 50% 100%; animation: shb-sway 3.6s ease-in-out infinite; }
+@keyframes shb-sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg) scale(1.01, 0.99); } }
+.shb .shb-eyes { transform-box: fill-box; transform-origin: center; animation: shb-blink 4.6s infinite; }
+@keyframes shb-blink { 0%, 93%, 100% { transform: none; } 96% { transform: scaleY(0.1); } }
+.shb .shb-tuft { animation: shb-tuft 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 30% 100%; }
+@keyframes shb-tuft { 50% { transform: rotate(10deg); } }
+
+/* hums at the end of a Pomodoro round */
+.shb.mood-hum .shb-all { animation: shb-hum 0.8s ease-in-out infinite; }
+@keyframes shb-hum { 0%, 100% { transform: rotate(-5deg) scale(1.02, 0.98); } 50% { transform: rotate(5deg) scale(0.98, 1.03); } }
+.shb .shb-mouth-hum { transform-box: fill-box; transform-origin: center; animation: shb-mouth 0.4s ease-in-out infinite alternate; }
+@keyframes shb-mouth { to { transform: scale(0.75, 1.15); } }
+.shb-notes text { opacity: 0; animation: shb-note 2.2s ease-out infinite; }
+.shb-notes text:nth-child(2) { animation-delay: 0.7s; }
+.shb-notes text:nth-child(3) { animation-delay: 1.4s; }
+@keyframes shb-note { 0% { opacity: 0; transform: translate(0, 10px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(8px, -22px) rotate(12deg); } }
+
+/* shocked when the camera spots a phone */
+.shb.mood-shocked .shb-all { animation: shb-jolt 0.55s var(--spring) both, shb-shiver 0.12s 0.55s linear 6; }
+@keyframes shb-jolt { 0% { transform: none; } 35% { transform: translateY(-14px) scale(1.08, 1.12); } 100% { transform: scale(1.04, 1.04); } }
+@keyframes shb-shiver { 0%, 100% { transform: scale(1.04) translateX(-1.2px); } 50% { transform: scale(1.04) translateX(1.2px); } }
+.shb .shb-pupil { transform-box: fill-box; transform-origin: center; animation: shb-pupil 1.4s ease-in-out infinite; }
+@keyframes shb-pupil { 50% { transform: scale(0.7); } }
+.shb-bang { transform-box: fill-box; transform-origin: 50% 100%; animation: shb-bang 0.5s var(--spring) both; }
+@keyframes shb-bang { from { opacity: 0; transform: scale(0.2) rotate(-20deg); } to { opacity: 1; transform: none; } }
+.shb-falling ellipse { animation: shb-leaf 2.4s 0.2s ease-in both; }
+.shb-falling ellipse:nth-child(2) { animation-delay: 0.4s; animation-duration: 2.8s; }
+@keyframes shb-leaf { 0% { opacity: 1; transform: none; } 30% { transform: translate(-6px, 18px) rotate(40deg); } 60% { transform: translate(4px, 40px) rotate(-20deg); } 100% { opacity: 0; transform: translate(-4px, 66px) rotate(60deg); } }
+
+/* dozes off when the sky goes dark */
+.shb.mood-sleep .shb-all { animation: shb-breathe 4.2s ease-in-out infinite; }
+@keyframes shb-breathe { 50% { transform: scale(1.03, 0.97); } }
+.shb .shb-cap { animation: shb-cap 4.2s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes shb-cap { 50% { transform: translateY(1px) rotate(-3deg); } }
+.shb-zz { animation: zz 3.2s ease-in-out infinite; }
+.shb-wrap, .shb-stir { display: block; transform-origin: 50% 100%; }
+.shb-stir { animation: shb-stir 0.7s var(--ease); }
+@keyframes shb-stir { 30% { transform: rotate(-4deg) scale(1.03, 0.97); } 65% { transform: rotate(3deg); } }
+
+/* where he stands */
+.gw-shrub { bottom: calc(var(--ground) - 14px); }
+.gw-shrub .gw-thing-hit { border-radius: 50%; }
+.gs-shrub { position: absolute; left: 4px; bottom: 6px; z-index: 1; border: 0; background: none; padding: 0; cursor: pointer; filter: brightness(calc(0.5 + var(--lit) * 0.5)); transition: transform 0.3s var(--spring); }
+.gs-shrub:hover { transform: translateY(-2px); }
+.grow-shrub { flex: none; margin: -14px -4px 0 -6px; align-self: flex-end; }

@@ -38,6 +38,7 @@ export default function App() {
   const [gardenSheet, setGardenSheet] = useState<"seed" | "collection" | null>(null);
   const [helpers, setHelpers] = useState<Helpers>({ blocker: false, closer: false });
   const [toast, setToast] = useState<ToastData | null>(null);
+  const [phoneAt, setPhoneAt] = useState(0); // Shrubert looks shocked when the camera spots your phone
   const [camStatus, setCamStatus] = useState<CamStatus>({ state: "off", present: false, faceVisible: false });
   const camRef = useRef<FocusCamera | null>(null);
   const framesRef = useRef(0);
@@ -215,6 +216,7 @@ export default function App() {
       resume();
       showToast({ icon: "✨", text: "Welcome back. Timer's running again." });
     } else if (e === "phone") {
+      setPhoneAt(Date.now());
       showToast({ icon: "📵", text: "Phone down? It'll still be there at the break." });
     } else if (e === "posture") {
       showToast({ icon: "🪑", text: "Quick posture check. Sit back and drop your shoulders." });
@@ -365,6 +367,7 @@ export default function App() {
         onSkipBreak={skipBreak}
         onFinish={finish}
         garden={liveGarden}
+        phoneAt={phoneAt}
       />
     );
   } else if (done) {

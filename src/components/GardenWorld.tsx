@@ -13,6 +13,7 @@ import GardenPlant from "./GardenPlant";
 import SkyLayer from "./Sky";
 import { Sprite } from "./Visitors";
 import SeedJar from "./SeedJar";
+import Shrubert, { useShrubMood } from "./Shrubert";
 import { lower } from "../lib/words";
 
 interface Props {
@@ -27,9 +28,10 @@ interface Props {
 const GATE_X = 90;
 const SHED_X = 250;
 const JAR_X = 430;
-const HERO_X = 600;
-const POND_X = 790;
-const PLOT_X0 = 980;
+const SHRUB_X = 575;
+const HERO_X = 740;
+const POND_X = 930;
+const PLOT_X0 = 1120;
 const PLOT_GAP = 230;
 const SPEED = 280;
 const GROUND = 200;
@@ -37,10 +39,30 @@ const GROUND = 200;
 type Thing =
   | { kind: "gate"; x: number }
   | { kind: "jar"; x: number }
+  | { kind: "shrub"; x: number }
   | { kind: "hero"; x: number }
   | { kind: "pond"; x: number }
   | { kind: "plot"; x: number; plot: Plot }
   | { kind: "next"; x: number; n: number };
+
+// What Shrubert says when you stop by. One line at a time: he's a shrub, not a chatbot.
+function shrubLine(garden: GardenState, night: boolean) {
+  const { shrub, hours } = garden;
+  if (night) return pick(["Zzz… five more minutes.", "Mmh… is it morning?", "*snores in leaf*", "Zzz… photosynthesis…"]);
+  const lines = [
+    "Hi! I'm Shrubert.",
+    "Every hour you focus, I get a bit bushier.",
+    "Phones make me nervous. Just so you know.",
+    "I hum when a round ends. Listen closely.",
+    "Nice garden. I helped. Mostly by standing here.",
+  ];
+  if (shrub.next) lines.push(`${shrub.next.what} at ${shrub.next.hours} h. I can feel it coming.`);
+  if (hours < 1) lines.push("I'm small now, but I believe in us.");
+  if (shrub.berries) lines.push("Berry? Don't eat it, it's decorative.");
+  if (shrub.crown) lines.push("Look at my golden flower. Look at it.");
+  return pick(lines);
+}
+const pick = (a: string[]) => a[Math.floor(Math.random() * a.length)];
 
 const thanks: Record<string, string[]> = {
   any: ["Ahh, thank you!", "So refreshing.", "I feel taller already.", "Best gardener ever.", "Mmm, water."],
@@ -70,7 +92,7 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
   const hasFrog = garden.visitors.has("frog");
 
   const things = useMemo<Thing[]>(() => {
-    const t: Thing[] = [{ kind: "gate", x: GATE_X }, { kind: "jar", x: JAR_X }, { kind: "hero", x: HERO_X }];
+    const t: Thing[] = [{ kind: "gate", x: GATE_X }, { kind: "jar", x: JAR_X }, { kind: "shrub", x: SHRUB_X }, { kind: "hero", x: HERO_X }];
     if (hasFrog) t.push({ kind: "pond", x: POND_X });
     plots.forEach((p, i) => t.push({ kind: "plot", x: PLOT_X0 + i * PLOT_GAP, plot: p }));
     t.push({ kind: "next", x: nextX, n: plots.length + 1 });
@@ -89,6 +111,8 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
   const [watered, setWatered] = useState<{ i: number; line: string; n: number } | null>(null);
   const [petted, setPetted] = useState<{ id: string; n: number } | null>(null);
   const [moved, setMoved] = useState(false);
+  const shrub = useShrubMood(sky.night);
+  const [stir, setStir] = useState(0);
 
   useEffect(() => {
     const onResize = () => setWin({ w: innerWidth, h: innerHeight });
@@ -141,6 +165,16 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
     if (th.kind === "plot" && !th.plot.species) return onPickSeed();
     if (th.kind === "next" || th.kind === "gate") return;
     if (th.kind === "jar") return onCollection();
+    if (th.kind === "shrub") {
+      // Awake, he hums a little tune for you. Asleep, he just stirs and mumbles.
+      if (sky.night) setStir(Date.now());
+      else {
+        shrub.react("hum");
+        if (settings.sound) chime.hum();
+      }
+      setWatered({ i, line: shrubLine(garden, sky.night), n: Date.now() });
+      return;
+    }
     if (th.kind === "pond") {
       setPetted({ id: "frog", n: Date.now() });
       return;
@@ -280,6 +314,15 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
           </button>
         </div>
 
+        {/* Shrubert, who lives here */}
+        <div className="gw-thing gw-shrub" style={{ left: SHRUB_X }}>
+          <button className="gw-thing-hit" onClick={() => act(things.findIndex((t) => t.kind === "shrub"))} aria-label="Shrubert">
+            <span className={stir ? "shb-stir" : "shb-wrap"} key={stir}>
+              <Shrubert shrub={garden.shrub} mood={shrub.mood} flash={shrub.flash} size={112} />
+            </span>
+          </button>
+        </div>
+
         {/* your first plant */}
         <div className={`gw-thing gw-plant ${watered?.i === things.findIndex((t) => t.kind === "hero") ? "watered" : ""}`} style={{ left: HERO_X }}>
           <button className="gw-thing-hit" onClick={() => act(things.findIndex((t) => t.kind === "hero"))} aria-label="Your first plant">
@@ -350,7 +393,7 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
         </div>
 
         {watered && things[watered.i] && (
-          <p className="gw-bubble" key={watered.n} style={{ left: things[watered.i].x }}>{watered.line}</p>
+          <p className={`gw-bubble ${things[watered.i].kind === "shrub" ? "low" : ""}`} key={watered.n} style={{ left: things[watered.i].x }}>{watered.line}</p>
         )}
         {petted && (
           <p className="gw-bubble heart" key={petted.n} style={{ left: critterX(petted.id) }}>
@@ -374,7 +417,7 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
       {!moved && <p className="gw-hint">Walk with <kbd>←</kbd> <kbd>→</kbd> or click the path · <kbd>Space</kbd> to water</p>}
 
       <div className="gw-card-wrap">
-        {th && <InfoCard key={near} thing={th} garden={garden} flowers={flowers} stage={stage} onPick={onPickSeed} onCollection={onCollection} onWater={() => act()} />}
+        {th && <InfoCard key={near} thing={th} garden={garden} flowers={flowers} stage={stage} night={sky.night} onPick={onPickSeed} onCollection={onCollection} onWater={() => act()} />}
       </div>
     </div>
   );
@@ -387,9 +430,10 @@ export default function GardenWorld({ garden, settings, onPickSeed, onCollection
   }
 }
 
-function InfoCard({ thing, garden, flowers, stage, onPick, onCollection, onWater }: {
-  thing: Thing; garden: GardenState; flowers: number; stage: number; onPick: () => void; onCollection: () => void; onWater: () => void;
+function InfoCard({ thing, garden, flowers, stage, night, onPick, onCollection, onWater }: {
+  thing: Thing; garden: GardenState; flowers: number; stage: number; night: boolean; onPick: () => void; onCollection: () => void; onWater: () => void;
 }) {
+  const sky = { night };
   const { hours } = garden;
   let title = "", body = "", action: { label: string; run: () => void } | null = null, pct: number | null = null;
   if (thing.kind === "gate") {
@@ -400,6 +444,16 @@ function InfoCard({ thing, garden, flowers, stage, onPick, onCollection, onWater
     title = `Seed jar · ${garden.seeds} seeds`;
     body = ns ? `A seed drops in for every 25 focused minutes. ${ns.seeds - garden.seeds} more to unlock ${lower(ns.name)}.` : "A seed for every 25 minutes. You've unlocked every seed!";
     action = { label: "Open collection", run: onCollection };
+  } else if (thing.kind === "shrub") {
+    const sh = garden.shrub;
+    title = `Shrubert · ${sh.stage.name.toLowerCase()}`;
+    body = sky.night
+      ? "Fast asleep until the sun comes up. He's still growing, though."
+      : sh.next
+        ? `Gets bushier with every hour you focus. ${sh.next.what} at ${sh.next.hours} h, that's ${hoursLeft(sh.next.hours - hours)} away.`
+        : "As bushy as a shrub can get. Golden flower and everything.";
+    pct = sh.next ? sh.toNext : null;
+    action = { label: sky.night ? "Tiptoe past" : "Say hi", run: onWater };
   } else if (thing.kind === "hero") {
     const np = nextPot(hours);
     title = "Your first plant";

@@ -175,6 +175,54 @@ export function visitorProgress(id: VisitorId, f: VisitorFacts): [number, number
 
 export const visitorsFor = (f: VisitorFacts) => new Set(VISITORS.filter((v) => v.has(f)).map((v) => v.id));
 
+// ---------- Shrubert ----------
+
+/** Shrubert, the little shrub who lives by the gate. He fills out with every hour you focus. */
+export interface ShrubStage {
+  hours: number;
+  name: string;
+  what: string; // what changes when he reaches it
+}
+
+export const SHRUB_STAGES: ShrubStage[] = [
+  { hours: 0, name: "Little sprig", what: "" },
+  { hours: 5, name: "Leafy", what: "More leaves" },
+  { hours: 15, name: "Bushy", what: "Proper bushiness" },
+  { hours: 30, name: "Blooming", what: "Flowers" },
+  { hours: 60, name: "Berry bush", what: "Berries" },
+  { hours: 100, name: "Grand shrub", what: "A golden flower" },
+];
+
+/** He reaches full bushiness at 100 h. */
+export const SHRUB_FULL_HOURS = 100;
+
+export interface ShrubState {
+  bush: number; // 0 to 1, how bushy he is
+  stage: ShrubStage;
+  next: ShrubStage | null;
+  toNext: number; // 0 to 1 of the way to the next stage
+  flowers: boolean;
+  berries: boolean;
+  crown: boolean;
+}
+
+export function shrubAt(hours: number): ShrubState {
+  let i = 0;
+  while (i + 1 < SHRUB_STAGES.length && hours >= SHRUB_STAGES[i + 1].hours) i++;
+  const stage = SHRUB_STAGES[i];
+  const next = SHRUB_STAGES[i + 1] ?? null;
+  return {
+    // Square root, so early hours show quickly and later ones still add a little.
+    bush: Math.min(1, Math.sqrt(Math.max(0, hours) / SHRUB_FULL_HOURS)),
+    stage,
+    next,
+    toNext: next ? (hours - stage.hours) / (next.hours - stage.hours) : 1,
+    flowers: hours >= 30,
+    berries: hours >= 60,
+    crown: hours >= 100,
+  };
+}
+
 // ---------- everything at once ----------
 
 export interface GardenState {
@@ -186,6 +234,7 @@ export interface GardenState {
   pot: PotId;
   facts: VisitorFacts;
   visitors: Set<VisitorId>;
+  shrub: ShrubState;
 }
 
 export function gardenState(sessions: Session[], settings: Settings, picks: (SpeciesId | null)[], extraMin = 0, now = Date.now()): GardenState {
@@ -201,6 +250,7 @@ export function gardenState(sessions: Session[], settings: Settings, picks: (Spe
     pot: potAt(hours),
     facts,
     visitors: visitorsFor(facts),
+    shrub: shrubAt(hours),
   };
 }
 
