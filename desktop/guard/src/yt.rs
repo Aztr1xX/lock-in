@@ -133,18 +133,41 @@ const CATEGORIES: &[&str] = &[
 ];
 
 pub fn parse_category(html: &str) -> String {
-    let key = "\"category\":\"";
-    let mut from = 0;
-    while let Some(i) = html[from..].find(key) {
-        let start = from + i + key.len();
-        let rest = &html[start..];
-        let value = rest[..rest.find('"').unwrap_or(0)].replace("\\u0026", "&");
-        if CATEGORIES.contains(&value.as_str()) {
-            return value;
+    // The player data has "category":"Education"; the page head has
+    // <meta itemprop="genre" content="Education">. Either is fine.
+    for key in ["\"category\":\"", "itemprop=\"genre\" content=\"", "\"genre\":\""] {
+        let mut from = 0;
+        while let Some(i) = html[from..].find(key) {
+            let start = from + i + key.len();
+            let rest = &html[start..];
+            let value = rest[..rest.find('"').unwrap_or(0)].replace("\\u0026", "&").replace("&amp;", "&");
+            if CATEGORIES.contains(&value.as_str()) {
+                return value;
+            }
+            from = start;
         }
-        from = start;
     }
     String::new()
+}
+
+/// A few snippets around "categor" or "genre", to show in the log when no category was found.
+fn clues(html: &str) -> String {
+    let lower = html.to_lowercase();
+    let mut out = vec![];
+    for key in ["categor", "genre"] {
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(key) {
+            let at = from + i;
+            let a = (0..=at.saturating_sub(30)).rev().find(|&k| html.is_char_boundary(k)).unwrap_or(0);
+            let b = (at + 50..=html.len()).find(|&k| html.is_char_boundary(k)).unwrap_or(html.len());
+            out.push(html[a..b].replace('\n', " "));
+            from = at + key.len();
+            if out.len() >= 4 {
+                return out.join(" ~ ");
+            }
+        }
+    }
+    if out.is_empty() { html.chars().take(120).collect() } else { out.join(" ~ ") }
 }
 
 fn encode(q: &str) -> String {
@@ -178,7 +201,7 @@ pub fn search(q: &str, allow_channels: &[String]) -> Result<(String, Vec<Video>)
             std::thread::spawn(move || match crate::web::get("www.youtube.com", &format!("/watch?v={id}")) {
                 Ok(h) => {
                     let c = parse_category(&h);
-                    let problem = if c.is_empty() { format!("no category in {} bytes", h.len()) } else { String::new() };
+                    let problem = if c.is_empty() { format!("no category in {} bytes: {}", h.len(), clues(&h)) } else { String::new() };
                     (c, problem)
                 }
                 Err(e) => (String::new(), e),
@@ -212,6 +235,8 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!((v[0].id.as_str(), v[0].title.as_str(), v[0].channel_id.as_str(), v[0].length.as_str()), ("abcdefghijk", "Limits explained", "UC123", "12:01"));
         assert_eq!(parse_category(r#"..."category":"Science & Technology",..."#), "Science & Technology");
+        assert_eq!(parse_category(r#"<meta itemprop="genre" content="Science &amp; Technology">"#), "Science & Technology");
+        assert_eq!(parse_category(r#""category":"VIDEO","category":"Education""#), "Education");
         assert_eq!(encode("a+b c"), "a%2Bb+c");
     }
 }
