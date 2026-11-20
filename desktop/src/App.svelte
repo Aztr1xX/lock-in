@@ -16,23 +16,55 @@
   // ---------- camera ----------
   let video: HTMLVideoElement;
   let cams = $state<MediaDeviceInfo[]>([]);
-  let camId = $state("");
+  let camId = $state(savedCamera());
   let camState = $state<"idle" | "loading" | "running" | "error">("idle");
   let camError = $state("");
   let stats = $state<CamStats | null>(null);
   let test: CamTest | null = null;
 
+  function savedCamera(): string {
+    try {
+      return localStorage.getItem("lockin.camera") ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  // Camera names only show up after the camera has been opened once. The app is allowed the
+  // camera without a prompt, so open it for a moment to get the full list.
+  async function loadCameras() {
+    try {
+      let list = await listCameras();
+      if (list.length && !list[0].label) {
+        const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+        probe.getTracks().forEach((t) => t.stop());
+        list = await listCameras();
+      }
+      cams = list;
+      if (!cams.some((c) => c.deviceId === camId)) camId = preferredCamera(cams);
+    } catch {
+      /* no camera, or blocked: the start button shows the error */
+    }
+  }
+
+  async function pickCamera(id: string) {
+    camId = id;
+    try {
+      localStorage.setItem("lockin.camera", id);
+    } catch {
+      /* fine, it just won't be remembered */
+    }
+    if (camState === "running") {
+      stopCam();
+      await startCam();
+    }
+  }
+
   async function startCam() {
     camState = "loading";
     camError = "";
     try {
-      // Ask once with any camera so the labels appear, then pick the preferred one.
-      if (!cams.length || !cams[0].label) {
-        const probe = await navigator.mediaDevices.getUserMedia({ video: true });
-        probe.getTracks().forEach((t) => t.stop());
-        cams = await listCameras();
-        camId = camId || preferredCamera(cams);
-      }
+      if (!cams.length || !cams[0].label) await loadCameras();
       await openCamera(video, camId);
       test = new CamTest(video, (s) => (stats = s));
       await test.start();
@@ -59,6 +91,8 @@
     secondsLeft: number;
     attempts: { host: string; at: number }[];
     sinkhole: string[];
+    layers?: string[];
+    hostsOk?: boolean;
   };
   let guard = $state<Status | null>(null);
   let guardMsg = $state("");
@@ -94,7 +128,7 @@
   async function block() {
     const hosts = sites.split(/[\s,]+/).filter(Boolean);
     const r = await call<{ ok: boolean; error?: string }>({ cmd: "block", hosts, minutes });
-    guardMsg = r.ok ? "Blocking. Try the sites now in Chrome, Incognito and Edge." : `Could not block: ${r.error}`;
+    guardMsg = r.ok ? "Blocking. Try the sites now in Chrome, Incognito, Edge and Opera, including tabs that were already open." : `Could not block: ${r.error}`;
     refresh();
   }
 
@@ -130,7 +164,9 @@
     { id: "chrome", group: "Blocking", text: "Blocked in Chrome" },
     { id: "incognito", group: "Blocking", text: "Blocked in Chrome Incognito" },
     { id: "edge", group: "Blocking", text: "Blocked in Edge" },
-    { id: "securedns", group: "Blocking", text: "Still blocked with Chrome's secure DNS on" },
+    { id: "opera", group: "Blocking", text: "Blocked in Opera" },
+    { id: "opentab", group: "Blocking", text: "A tab that was already open stopped working" },
+    { id: "subdomain", group: "Blocking", text: "Other parts of a site were blocked too (like music.youtube.com)" },
     { id: "attempts", group: "Blocking", text: "Your attempts showed up in the list" },
     { id: "defender", group: "Blocking", text: "Windows Security stayed quiet" },
     { id: "unblock", group: "Blocking", text: "Sites came back on their own when time ran out" },
@@ -154,7 +190,10 @@
       );
     if (camError) lines.push(`Camera error: ${camError}`);
     if (upd.kind === "error") lines.push(`Update check: ${upd.message}`);
-    if (guard) lines.push(`Guard ${guard.version}, sinkhole on ${guard.sinkhole.join(" ") || "none"}, ${guard.attempts.length} attempts seen`);
+    if (guard)
+      lines.push(
+        `Guard ${guard.version}, sinkhole on ${guard.sinkhole.join(" ") || "none"}, ${guard.attempts.length} attempts seen${guard.blocking ? `, layers: hosts ${(guard.layers ?? []).join(" ")}, hosts file ${guard.hostsOk === false ? "REVERTED" : "ok"}` : ""}`,
+      );
     for (const c of checks) lines.push(`${marks[c.id] === "pass" ? "PASS" : marks[c.id] === "fail" ? "FAIL" : "not tried"}: ${c.text}`);
     if (note.trim()) lines.push(`Notes: ${note.trim()}`);
     return lines.join("\n");
@@ -174,10 +213,7 @@
 
   onMount(() => {
     if (inTauri) invoke("about").then((a) => (about = a as typeof about));
-    listCameras().then((c) => {
-      cams = c;
-      camId = preferredCamera(c);
-    });
+    loadCameras();
     refresh();
     const t = setInterval(refresh, 2000);
     let u = 0;
@@ -222,10 +258,10 @@
         {#if camState !== "running"}<div class="veil">{camState === "loading" ? "Loading models..." : "Camera off"}</div>{/if}
       </div>
       <div class="side">
-        {#if cams.length > 1}
+        {#if cams.length}
           <label>Camera
-            <select bind:value={camId} disabled={camState === "running"}>
-              {#each cams as c}<option value={c.deviceId}>{c.label || "Camera"}</option>{/each}
+            <select value={camId} onchange={(e) => pickCamera(e.currentTarget.value)} disabled={camState === "loading"}>
+              {#each cams as c, i}<option value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>{/each}
             </select>
           </label>
         {/if}
@@ -265,7 +301,10 @@
       <button onclick={() => setup("install")} disabled={busy}>Install Lock In Guard</button>
     {:else}
       {#if about.app && guard.version !== about.app}
-        <p class="msg">The Guard is on {guard.version} and the app is on {about.app}. <button class="link" onclick={() => setup("install")} disabled={busy}>Update the Guard</button></p>
+        <div class="update">
+          <span>The Guard needs an update to {about.app} (it's on {guard.version}). Windows will ask for admin once.</span>
+          <button onclick={() => setup("install")} disabled={busy}>Update the Guard</button>
+        </div>
       {/if}
       <p class="ok">Guard {guard.version} is running.{guard.sinkhole.length ? "" : " (Attempt tracking is off: ports 80 and 443 are in use by something else.)"}</p>
       {#if guard.blocking}
@@ -274,6 +313,8 @@
           <span>{guard.hosts.join(", ")}</span>
           <button class="ghost" onclick={unblock}>Unblock now</button>
         </div>
+        {#if guard.layers}<p class="msg">Blocked through: hosts file{guard.layers.length ? `, ${guard.layers.join(", ")}` : ""}</p>{/if}
+        {#if guard.hostsOk === false}<p class="err">Something (probably antivirus) took the block back out of the hosts file. Tell Claude.</p>{/if}
       {:else}
         <div class="row">
           <input bind:value={sites} aria-label="Sites to block" />

@@ -108,6 +108,11 @@ pub fn write_block(names: &[String]) -> Result<(), String> {
     write(&lines)
 }
 
+/// True if the Lock In section is still in the hosts file.
+pub fn has_block() -> bool {
+    read().map(|t| t.contains(START)).unwrap_or(false)
+}
+
 pub fn clear_block() -> Result<(), String> {
     let text = read()?;
     if !text.contains(START) {

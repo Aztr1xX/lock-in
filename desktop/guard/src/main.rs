@@ -14,6 +14,7 @@
 //!   lockin-guard run         run in the foreground, for testing
 //!   lockin-guard service     what Windows runs; not for people
 
+mod browsers;
 mod hosts;
 mod sni;
 
@@ -43,6 +44,12 @@ struct Saved {
     hosts: Vec<String>,
     /// Unix seconds when blocking ends. 0 = not blocking.
     until: u64,
+    /// Registry values the browser layer added, so they are always removed again.
+    #[serde(default)]
+    touched: Vec<String>,
+    /// Which extra layers took (Chrome, Edge, Firewall...), for the app to show.
+    #[serde(default)]
+    layers: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -110,16 +117,29 @@ fn start_block(names: &[String], minutes: f64) -> Result<Saved, String> {
         return Err("no valid site names".into());
     }
     let minutes = minutes.clamp(0.1, MAX_BLOCK_MIN);
-    hosts::write_block(&list)?;
+    // A new block replaces the old one completely.
+    let old = std::mem::take(&mut state().lock().unwrap().saved.touched);
+    browsers::clear(&old);
+    hosts::write_block(&hosts_names(&list))?;
     hosts::flush_dns();
+    let (touched, layers) = browsers::apply(&list);
     let mut st = state().lock().unwrap();
-    st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64 };
+    st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64, touched, layers };
     save(&st.saved);
-    log(&format!("block {} names for {minutes} min", st.saved.hosts.len()));
+    log(&format!("block {} names for {minutes} min, layers: hosts {}", st.saved.hosts.len(), st.saved.layers.join(" ")));
     Ok(st.saved.clone())
 }
 
+/// What goes in the hosts file: the blocked sites plus the secure DNS resolvers.
+fn hosts_names(sites: &[String]) -> Vec<String> {
+    let mut all = sites.to_vec();
+    all.extend(browsers::DOH_HOSTS.iter().map(|s| s.to_string()));
+    all
+}
+
 fn stop_block(why: &str) {
+    let touched = std::mem::take(&mut state().lock().unwrap().saved.touched);
+    browsers::clear(&touched);
     if let Err(e) = hosts::clear_block() {
         log(&format!("could not clean hosts file: {e}"));
     }
@@ -261,6 +281,9 @@ fn handle(req: Req) -> serde_json::Value {
                 "secondsLeft": st.saved.until.saturating_sub(now()),
                 "attempts": st.attempts,
                 "sinkhole": sinkhole_ports(),
+                "layers": if blocking { st.saved.layers.clone() } else { vec![] },
+                // False if something (usually antivirus) took the block back out of the hosts file.
+                "hostsOk": !blocking || hosts::has_block(),
             })
         }
         Req::Block { hosts, minutes } => match start_block(&hosts, minutes) {
@@ -357,10 +380,11 @@ pub fn start_workers() -> Arc<AtomicBool> {
     let saved = load();
     if saved.until > now() {
         state().lock().unwrap().saved = saved.clone();
-        let _ = hosts::write_block(&saved.hosts);
+        let _ = hosts::write_block(&hosts_names(&saved.hosts));
         hosts::flush_dns();
         log("resumed a block after restart");
     } else {
+        state().lock().unwrap().saved = saved;
         stop_block("startup clean");
     }
     let stop = Arc::new(AtomicBool::new(false));
@@ -544,6 +568,8 @@ mod service {
         wait_for(&svc, ServiceState::Stopped);
         svc.delete().map_err(|x| x.to_string())?;
         // Belt and braces: the hosts file is clean even if the service never got to stop itself.
+        browsers::clear(&load().touched);
+        save(&Saved::default());
         let _ = hosts::clear_block();
         hosts::flush_dns();
         println!("Lock In Guard removed.");
