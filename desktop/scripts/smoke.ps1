@@ -68,7 +68,8 @@ Check ($LASTEXITCODE -ne 0) "a subdomain not in the hosts file is stopped by nam
 curl.exe -s --max-time 8 -o NUL https://www.iana.org/
 Check ($LASTEXITCODE -eq 0) "other sites still load during the block"
 # YouTube stays open for studying: the Guard passes it through with the feed and fun taken out.
-function Yt($path) { return (curl.exe -s --ssl-no-revoke --max-time 25 "https://www.youtube.com$path" | Out-String) }
+# Ask like a browser opening a page, so YouTube sends its full page and the Guard treats it as one.
+function Yt($path) { return (curl.exe -s --ssl-no-revoke --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36" -H "Accept: text/html" -H "Sec-Fetch-Dest: document" -H "Accept-Language: en-US" "https://www.youtube.com$path" | Out-String) }
 Step "study-only YouTube"
 $ythome = Yt "/"
 Check ($ythome -match "lockin-study" -and $ythome -notmatch "This can wait") "youtube.com opens with the feed hidden ($($ythome.Length) chars)"
