@@ -141,6 +141,8 @@ Check ($seen -contains "example.com") "HTTPS attempt was seen through SNI ($($se
 $np = Start-Process notepad -PassThru
 Start-Sleep -Seconds 6
 Check ($np.HasExited) "an app on the round's list is closed again when it's opened"
+$closedNames = @((Guard @{ cmd = "status" }).closed | ForEach-Object { $_.name })
+Check ($closedNames -contains "notepad.exe") "the Guard tells the app what it closed ($($closedNames -join ', '))"
 
 Write-Host "Waiting for the block to end on its own..."
 do { Start-Sleep -Seconds 2; $st = Guard @{ cmd = "status" } } while ($st.blocking)

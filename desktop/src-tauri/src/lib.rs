@@ -117,6 +117,21 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// Brings the window to the front when a round closes an app, so the person sees why.
+/// Windows often refuses plain focus requests from background apps, so the window is kept on
+/// top for a moment as well.
+#[tauri::command]
+fn bring_forward(app: tauri::AppHandle) {
+    show_main(&app);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_always_on_top(true);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = w.set_always_on_top(false);
+        });
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         // Updates: the app checks GitHub for a newer signed version and installs it itself.
@@ -129,7 +144,7 @@ pub fn run() {
             PermissionKind::Microphone => PermissionResponse::Deny,
             _ => PermissionResponse::Default,
         })
-        .invoke_handler(tauri::generate_handler![guard, guard_setup, about])
+        .invoke_handler(tauri::generate_handler![guard, guard_setup, about, bring_forward])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Open Lock In", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

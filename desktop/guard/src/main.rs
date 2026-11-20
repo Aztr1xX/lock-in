@@ -71,6 +71,15 @@ struct Attempt {
 struct State {
     saved: Saved,
     attempts: Vec<Attempt>,
+    /// Apps closed during rounds, so the app can tell the person why their game vanished.
+    closed: Vec<Closed>,
+}
+
+#[derive(Serialize, Clone)]
+struct Closed {
+    /// Program name, like "VALORANT.exe".
+    name: String,
+    at: u64,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -205,13 +214,27 @@ fn ticker(stop: Arc<AtomicBool>) {
         }
         // Keep the round's apps closed: anything reopened is closed again within a few seconds.
         tick += 1;
-        if tick % 3 == 0 {
+        if tick % 2 == 0 {
             let close = {
                 let st = state().lock().unwrap();
                 if st.saved.until > now() { st.saved.apps.clone() } else { vec![] }
             };
             if !close.is_empty() {
-                kill_by_name(&close);
+                let killed = kill_by_name(&close);
+                if !killed.is_empty() {
+                    let mut st = state().lock().unwrap();
+                    let t = now();
+                    let mut names: Vec<String> = killed.into_iter().map(|p| p.name).collect();
+                    names.sort_by_key(|n| n.to_lowercase());
+                    names.dedup_by_key(|n| n.to_lowercase());
+                    for name in names {
+                        st.closed.push(Closed { name, at: t });
+                    }
+                    let n = st.closed.len();
+                    if n > 50 {
+                        st.closed.drain(0..n - 50);
+                    }
+                }
             }
         }
         thread::sleep(Duration::from_secs(1));
@@ -308,6 +331,7 @@ fn handle(req: Req) -> serde_json::Value {
                 "hosts": if blocking { st.saved.hosts.clone() } else { vec![] },
                 "secondsLeft": st.saved.until.saturating_sub(now()),
                 "attempts": st.attempts,
+                "closed": st.closed,
                 "sinkhole": sinkhole_ports(),
                 "layers": if blocking { st.saved.layers.clone() } else { vec![] },
                 // False if something (usually antivirus) took the block back out of the hosts file.

@@ -5,6 +5,7 @@
   import SiteList from "./lib/SiteList.svelte";
   import { blockedHosts, loadSites } from "./lib/sites";
   import AppList from "./lib/AppList.svelte";
+  import CaughtCard from "./lib/CaughtCard.svelte";
   import { buildRows, closedExes, type AppRow, type InstalledApp } from "./lib/apps";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
 
@@ -94,6 +95,7 @@
     hosts: string[];
     secondsLeft: number;
     attempts: { host: string; at: number }[];
+    closed?: { name: string; at: number }[];
     sinkhole: string[];
     layers?: string[];
     hostsOk?: boolean;
@@ -112,6 +114,7 @@
     if (!inTauri) return;
     try {
       guard = await call<Status>({ cmd: "status" });
+      noticeClosed(guard);
     } catch {
       guard = null;
     }
@@ -144,6 +147,33 @@
     await call({ cmd: "unblock" });
     guardMsg = "Unblocked.";
     refresh();
+  }
+
+  // ---------- caught opening an app ----------
+  // When the Guard closes an app during a round, the window comes forward with a card saying so,
+  // so a game vanishing doesn't look like the laptop misbehaving.
+  let lastClosedAt = -1; // -1 until the first status, so older closings don't pop up on launch
+  let caught = $state<{ name: string; secondsLeft: number } | null>(null);
+
+  function appName(exe: string) {
+    const low = exe.toLowerCase();
+    const row = appRows.find((r) => r.exes.some((x) => x.toLowerCase() === low)) ?? installed.find((a) => a.exes.some((x) => x.toLowerCase() === low));
+    return row?.name ?? exe.replace(/\.exe$/i, "");
+  }
+
+  function noticeClosed(s: Status) {
+    const closed = s.closed ?? [];
+    const newest = closed.reduce((m, c) => Math.max(m, c.at), 0);
+    if (lastClosedAt < 0) {
+      lastClosedAt = newest;
+      return;
+    }
+    if (newest <= lastClosedAt) return;
+    const fresh = closed.filter((c) => c.at > lastClosedAt);
+    lastClosedAt = newest;
+    if (!s.blocking) return;
+    caught = { name: appName(fresh[fresh.length - 1].name), secondsLeft: s.secondsLeft };
+    invoke("bring_forward").catch(() => {});
   }
 
   // ---------- apps ----------
@@ -411,3 +441,5 @@
     </p>
   </footer>
 </main>
+
+{#if caught}{#key caught}<CaughtCard name={caught.name} secondsLeft={caught.secondsLeft} ondone={() => (caught = null)} />{/key}{/if}
