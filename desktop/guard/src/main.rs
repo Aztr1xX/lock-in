@@ -149,19 +149,22 @@ fn hosts_names(sites: &[String]) -> Vec<String> {
 
 fn stop_block(why: &str) {
     divert::stop();
-    page::end();
-    let touched = std::mem::take(&mut state().lock().unwrap().saved.touched);
-    browsers::clear(&touched);
     if let Err(e) = hosts::clear_block() {
         log(&format!("could not clean hosts file: {e}"));
     }
     hosts::flush_dns();
-    let mut st = state().lock().unwrap();
-    if st.saved.until != 0 {
-        log(&format!("unblock ({why})"));
+    let touched = std::mem::take(&mut state().lock().unwrap().saved.touched);
+    browsers::clear(&touched);
+    {
+        let mut st = state().lock().unwrap();
+        if st.saved.until != 0 {
+            log(&format!("unblock ({why})"));
+        }
+        st.saved = Saved::default();
+        save(&st.saved);
     }
-    st.saved = Saved::default();
-    save(&st.saved);
+    // Last, because certutil takes a moment: sites are already back by now.
+    page::end();
 }
 
 fn is_blocked(host: &str) -> bool {
