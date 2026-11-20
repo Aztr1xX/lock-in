@@ -29,9 +29,14 @@ Check ($r.ok -and $r.hosts -contains "www.example.com") "block accepted ($($r.ho
 $st = Guard @{ cmd = "status" }
 Check ($st.hostsOk) "hosts section still in place"
 Write-Host "      layers: $($st.layers -join ', ')"
-Check ($st.layers -contains "Chrome" -and $st.layers -contains "Edge" -and $st.layers -contains "Firewall") "browser policy and firewall layers are on"
-$pol = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist" -ErrorAction SilentlyContinue
-Check ($pol -and (@($pol.PSObject.Properties.Value) -contains "wikipedia.org")) "Chrome policy lists wikipedia.org"
+Check ($st.layers -contains "Chrome" -and $st.layers -contains "Edge" -and $st.layers -contains "Firewall" -and $st.layers -contains "Page") "secure DNS off, firewall and page layers are on"
+$doh = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name DnsOverHttpsMode -ErrorAction SilentlyContinue
+Check ($doh.DnsOverHttpsMode -eq "off") "Chrome secure DNS is off for the round"
+$ca = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Lock In focus round*" }
+Check (@($ca).Count -eq 1) "the round certificate is trusted ($(@($ca).Count) found)"
+# curl on Windows checks certificates against Windows' trusted list, like Chrome, Edge and Opera.
+$pg = curl.exe -s --max-time 8 https://www.example.com/ | Out-String
+Check ($pg -match "This can wait") "an HTTPS blocked site shows the Lock In page with a valid certificate"
 $rule = netsh advfirewall firewall show rule name=LockInFocusRound
 Check ($LASTEXITCODE -eq 0) "firewall rule is in place"
 $doh = [System.Net.Dns]::GetHostAddresses("dns.google") | ForEach-Object { $_.ToString() }
@@ -60,6 +65,8 @@ if ($hasChrome) {
   Start-Sleep -Seconds 3
   $domBlocked = ChromeDom "https://en.wikipedia.org/"
   Write-Host "      chrome during the block: $($domBlocked.Length) chars"
+  $domPage = ChromeDom "https://www.example.org/"
+  Check ($domPage -match "This can wait") "Chrome shows the Lock In page for a blocked site"
 }
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check ($hosts -match "127\.0\.0\.1 example\.com") "hosts file has the Lock In section"
@@ -90,8 +97,10 @@ do { Start-Sleep -Seconds 2; $st = Guard @{ cmd = "status" } } while ($st.blocki
 Start-Sleep -Seconds 2
 $hosts = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -Raw
 Check (-not ($hosts -match "Lock In")) "block ended on time and the hosts file is clean"
-Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist")) "Chrome policy removed"
-Check (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist")) "Edge policy removed"
+$doh = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name DnsOverHttpsMode -ErrorAction SilentlyContinue
+Check (-not $doh) "Chrome secure DNS setting removed"
+$ca = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Lock In focus round*" }
+Check (@($ca).Count -eq 0) "the round certificate is gone"
 netsh advfirewall firewall show rule name=LockInFocusRound | Out-Null
 Check ($LASTEXITCODE -ne 0) "firewall rule removed"
 curl.exe -s --max-time 8 -o NUL https://en.wikipedia.org/
@@ -100,7 +109,7 @@ if ($hasChrome) {
   Start-Sleep -Seconds 3
   $domFree = ChromeDom "https://en.wikipedia.org/"
   Write-Host "      chrome after the block: $($domFree.Length) chars"
-  Check (($domFree -match "Wikipedia") -and -not ($domBlocked -match "Wikipedia")) "Chrome blocked a subdomain through the policy, and let it through afterwards"
+  Check (($domFree -match "Wikipedia") -and -not ($domBlocked -match "Wikipedia")) "Chrome couldn't open a blocked subdomain, and could afterwards"
 }
 
 & $guard uninstall

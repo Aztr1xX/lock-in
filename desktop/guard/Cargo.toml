@@ -11,6 +11,9 @@ path = "src/main.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
+time = { version = "0.3", default-features = false, features = ["std"] }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -8,9 +8,8 @@
 //!   2. A browser keeps using connections it already has open, so a site that was open before the
 //!      round keeps working. Open TCP connections to blocked sites are cut when the round starts,
 //!      and QUIC (HTTP/3 over UDP 443) is blocked for the round so nothing can hide there.
-//!   3. Subdomains (music.youtube.com, old.reddit.com) aren't in the hosts file. Chrome, Edge,
-//!      Brave and Firefox get the block as a browser policy too, which covers every subdomain,
-//!      works in Incognito, and shows the browser's own "blocked" page.
+//!   3. Subdomains (music.youtube.com, old.reddit.com) aren't in the hosts file. The name layer
+//!      (divert.rs) catches those.
 //!
 //! Everything added is written down in the Guard's saved state, so it is always removed again,
 //! even after a crash or a restart.
@@ -62,18 +61,16 @@ pub fn bases(names: &[String]) -> Vec<String> {
 pub fn apply(sites: &[String]) -> (Vec<String>, Vec<String>) {
     let mut touched = vec![];
     let mut layers = vec![];
-    let bases = bases(sites);
+    // Secure DNS off, so every browser asks Windows (and so the hosts file) where a site is.
+    // No browser block lists: those show the browser's own page instead of Lock In's.
     for (name, key) in CHROMIUM {
-        let mut ok = reg::add_list(&format!(r"{key}\URLBlocklist"), &bases, &mut touched);
-        // Secure DNS off as well, in case a site is reached by a name the policy doesn't cover.
-        ok &= reg::set_if_absent(key, "DnsOverHttpsMode", "off", &mut touched);
-        if ok {
+        if reg::set_if_absent(key, "DnsOverHttpsMode", "off", &mut touched) {
             layers.push(name.to_string());
         }
     }
-    let ff: Vec<String> = bases.iter().map(|b| format!("*://*.{b}/*")).collect();
-    if reg::add_list(&format!(r"{FIREFOX}\WebsiteFilter\Block"), &ff, &mut touched)
-        & reg::set_dword_if_absent(&format!(r"{FIREFOX}\DNSOverHTTPS"), "Enabled", 0, &mut touched)
+    // Firefox: secure DNS off, and trust the round's certificate from Windows so the page shows.
+    if reg::set_dword_if_absent(&format!(r"{FIREFOX}\DNSOverHTTPS"), "Enabled", 0, &mut touched)
+        & reg::set_dword_if_absent(&format!(r"{FIREFOX}\Certificates"), "ImportEnterpriseRoots", 1, &mut touched)
     {
         layers.push("Firefox".into());
     }
@@ -158,27 +155,6 @@ mod reg {
         RegKey::predef(HKEY_LOCAL_MACHINE)
     }
 
-    /// Adds `items` to a policy list, numbered after anything already there.
-    pub fn add_list(key: &str, items: &[String], touched: &mut Vec<String>) -> bool {
-        let Ok((k, _)) = hklm().create_subkey(key) else { return false };
-        let mut next = k
-            .enum_values()
-            .flatten()
-            .filter_map(|(n, _)| n.parse::<u32>().ok())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        for item in items {
-            let name = next.to_string();
-            if k.set_value(&name, item).is_err() {
-                return false;
-            }
-            touched.push(format!("{key}|{name}"));
-            next += 1;
-        }
-        true
-    }
-
     /// Sets a string policy only if nobody else has, so a person's own setting is never overwritten.
     pub fn set_if_absent(key: &str, name: &str, value: &str, touched: &mut Vec<String>) -> bool {
         let Ok((k, _)) = hklm().create_subkey(key) else { return false };
@@ -249,9 +225,6 @@ mod reg {
 
 #[cfg(not(windows))]
 mod reg {
-    pub fn add_list(_: &str, _: &[String], _: &mut Vec<String>) -> bool {
-        false
-    }
     pub fn set_if_absent(_: &str, _: &str, _: &str, _: &mut Vec<String>) -> bool {
         false
     }

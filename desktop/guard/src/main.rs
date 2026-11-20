@@ -17,6 +17,7 @@
 mod browsers;
 mod divert;
 mod hosts;
+mod page;
 mod sni;
 
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,9 @@ fn start_block(names: &[String], minutes: f64) -> Result<Saved, String> {
     if divert::start(browsers::bases(&list)) {
         layers.push("Names".into());
     }
+    if page::start(&browsers::bases(&list)) {
+        layers.push("Page".into());
+    }
     let mut st = state().lock().unwrap();
     st.saved = Saved { hosts: list, until: now() + (minutes * 60.0).round() as u64, touched, layers };
     save(&st.saved);
@@ -143,6 +147,7 @@ fn hosts_names(sites: &[String]) -> Vec<String> {
 
 fn stop_block(why: &str) {
     divert::stop();
+    page::end();
     let touched = std::mem::take(&mut state().lock().unwrap().saved.touched);
     browsers::clear(&touched);
     if let Err(e) = hosts::clear_block() {
@@ -339,30 +344,21 @@ fn sinkhole_ports() -> Vec<String> {
     SINK_PORTS.lock().unwrap().clone()
 }
 
-const BLOCKED_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Blocked by Lock In</title>\
-<body style=\"font:18px system-ui;background:#f3ead8;color:#2c3a2a;display:grid;place-items:center;height:100vh;margin:0\">\
-<div style=\"text-align:center\"><h1 style=\"font-weight:600\">Locked in.</h1><p>This site is off until your round ends.</p></div>";
-
 fn serve_sink(mut stream: TcpStream, tls: bool) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let mut buf = [0u8; 4096];
-    let n = stream.read(&mut buf).unwrap_or(0);
+    // Peek, so the TLS layer can still read the ClientHello itself.
+    let n = if tls { stream.peek(&mut buf).unwrap_or(0) } else { stream.read(&mut buf).unwrap_or(0) };
     let data = &buf[..n];
     let host = if tls { sni::server_name(data) } else { sni::http_host(data) };
-    if let Some(h) = host {
-        if is_blocked(&h) {
-            record_attempt(h);
-        }
+    let Some(h) = host.filter(|h| is_blocked(h)) else { return };
+    record_attempt(h.clone());
+    let left = state().lock().unwrap().saved.until.saturating_sub(now());
+    if tls {
+        page::serve_tls(stream, &h, left);
+    } else {
+        let _ = stream.write_all(&page::response(&h, left));
     }
-    if !tls {
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
-            BLOCKED_PAGE.len(),
-            BLOCKED_PAGE
-        );
-    }
-    // For HTTPS we just close: the browser shows its own "can't reach this site" page.
 }
 
 fn sinkhole(addr: &'static str, tls: bool) {
@@ -388,6 +384,7 @@ pub fn start_workers() -> Arc<AtomicBool> {
         let _ = hosts::write_block(&hosts_names(&saved.hosts));
         hosts::flush_dns();
         divert::start(browsers::bases(&saved.hosts));
+        page::start(&browsers::bases(&saved.hosts));
         log("resumed a block after restart");
     } else {
         state().lock().unwrap().saved = saved;
@@ -586,6 +583,7 @@ mod service {
         svc.delete().map_err(|x| x.to_string())?;
         // Belt and braces: the hosts file is clean even if the service never got to stop itself.
         browsers::clear(&load().touched);
+        page::end();
         save(&Saved::default());
         let _ = hosts::clear_block();
         hosts::flush_dns();
