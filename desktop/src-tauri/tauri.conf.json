@@ -45,7 +45,11 @@
     },
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "installer/hooks.nsh"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
@@ -60,7 +64,7 @@
         "https://github.com/Aztr1xX/lock-in/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }
