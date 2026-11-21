@@ -10,6 +10,12 @@ This folder is phase 0: a test build that proves the risky parts on a real PC.
   is handed and reports numbers only. No network code (CI checks its dependencies). `camera/models/export.py`
   makes the ONNX models in CI and publishes them, with ONNX Runtime's DirectML build, as the
   `camera-models-1` pre-release; `scripts/camera-assets.ps1` fetches them for builds into `src-tauri/camera/`
+- `camera/train/` Lock In's own detector (person, phone, tablet, drink): `data.py` builds training and
+  test pictures from Open Images and COCO (with webcam-style copies), `weights.py` starts from
+  NanoDet-Plus's COCO weights, `train.py` trains on the CPU, `export.py` makes the ONNX files and
+  `evaluate.py` tests them against the COCO model the way the app judges phones. Runs in
+  `.github/workflows/camera-train.yml` (up to four 6-hour jobs in a row) and publishes to the
+  `camera-models-lockin-1` pre-release; `camera/models/export.py` takes it up only if its test passed
 - `capture/` reads the camera with Windows Media Foundation in the app's own process (not the window, which
   Windows slows down when minimised), keeping only the newest frame
 - `sandbox/` starts the camera worker in a Windows AppContainer with no capabilities: no network, camera or

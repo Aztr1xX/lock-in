@@ -19,7 +19,9 @@ Models marked timing_only are timed in CI but left out of the app, to keep the i
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -310,6 +312,59 @@ def nanodet():
         reference[f"nanodet-{key}-416"] = dets(multiclass_nms(b, cls, 0.6))
 
 
+# Lock In's own detector (camera plan, step 4), trained by .github/workflows/camera-train.yml and
+# published to a pre-release of this repository with its test against NanoDet-Plus. Taken up only
+# once that test says it's better.
+LOCKIN_TAG = "camera-models-lockin-1"
+LOCKIN_CLASSES = ["person", "cell phone", "tablet", "cup"]
+
+
+def lockin_fetch(name: str) -> Path | None:
+    dst = TMP / "lockin"
+    dst.mkdir(exist_ok=True)
+    r = subprocess.run(["gh", "release", "download", LOCKIN_TAG, "-p", name, "-D", str(dst), "--clobber", "--repo", os.environ.get("GITHUB_REPOSITORY", "Aztr1xX/lock-in")], capture_output=True, text=True)
+    return dst / name if r.returncode == 0 else None
+
+
+@step("Lock In detector")
+def lockin():
+    report = lockin_fetch("evaluation.md")
+    if report is None:
+        print("  not trained yet; skipped")
+        return
+    if "NOT better" in report.read_text():
+        print("  trained, but its test says it isn't better than NanoDet-Plus; skipped")
+        return
+    for size in (416, 320):
+        src = lockin_fetch(f"lockin-det-{size}.onnx")
+        assert src is not None, f"lockin-det-{size}.onnx is missing from {LOCKIN_TAG}"
+        add(f"lockin-det-{size}", src, "nanodet", size, "Lock In detector", "Apache-2.0", classes=LOCKIN_CLASSES)
+    # Reference: the same NanoDet-Plus pipeline as above, with 4 classes.
+    H = W = 416
+    x = cv2.resize(BUS_BGR, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+    x = (x - np.array([103.53, 116.28, 123.675], np.float32)) / np.array([57.375, 57.12, 58.395], np.float32)
+    o = run_onnx(OUT / "lockin-det-416.onnx", np.ascontiguousarray(x.transpose(2, 0, 1))[None])
+    pri = []
+    for st in (8, 16, 32, 64):
+        h, w = -(-H // st), -(-W // st)
+        yy, xx = np.meshgrid(np.arange(h) * st, np.arange(w) * st, indexing="ij")
+        pri.append(np.stack([xx.ravel(), yy.ravel(), np.full(h * w, st)], 1))
+    pri = np.concatenate(pri).astype(np.float32)
+    nc = len(LOCKIN_CLASSES)
+    cls, reg = o[:, :nc], o[:, nc:].reshape(-1, 4, 8)
+    e = np.exp(reg - reg.max(-1, keepdims=True))
+    d = (e / e.sum(-1, keepdims=True) * np.arange(8)).sum(-1) * pri[:, 2:3]
+    b = np.stack([pri[:, 0] - d[:, 0], pri[:, 1] - d[:, 1], pri[:, 0] + d[:, 2], pri[:, 1] + d[:, 3]], 1)
+    b = np.clip(b, 0, [W, H, W, H]) * np.array([BUS_BGR.shape[1] / W, BUS_BGR.shape[0] / H] * 2)
+    rows = []
+    for c in range(nc):
+        m = cls[:, c] > 0.3
+        if m.any():
+            bb, ss = b[m], cls[m, c]
+            rows += [(LOCKIN_CLASSES[c], ss[k], bb[k]) for k in nms(bb, ss, 0.6)]
+    reference["lockin-det-416"] = dets(rows)
+
+
 @step("RTMPose-s")
 def rtmpose():
     url = (
@@ -362,6 +417,7 @@ checks = [
     dict(name="YOLOX Tiny", frame="yolox-tiny-416", hands="yolox-tiny-416", pose="rtmpose-s"),
     dict(name="NanoDet-Plus", frame="nanodet-m-416", hands="nanodet-m-320", pose="rtmpose-s"),
     dict(name="NanoDet-Plus 1.5x", frame="nanodet-m15-416", hands="nanodet-m15-320", pose="rtmpose-s"),
+    dict(name="Lock In detector", frame="lockin-det-416", hands="lockin-det-320", pose="rtmpose-s"),
 ]
 have = {m["id"] for m in models}
 checks = [c for c in checks if {c["frame"], c["hands"], c["pose"]} <= have]

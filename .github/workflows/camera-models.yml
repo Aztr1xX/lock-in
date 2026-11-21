@@ -36,6 +36,8 @@ jobs:
           pip install "rfdetr[onnx]" ultralytics onnx onnxslim onnxruntime rtmlib pillow
 
       - name: Export and check the models
+        env:
+          GH_TOKEN: ${{ github.token }}  # reads Lock In's own detector from this repository's pre-release
         run: python desktop/camera/models/export.py out
 
       - name: Add ONNX Runtime ${{ env.ORT_VERSION }} with DirectML (Microsoft's official build)

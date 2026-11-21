@@ -25,6 +25,10 @@ pub struct ModelInfo {
     /// Timed in CI but not shipped in the app.
     #[serde(default)]
     pub timing_only: bool,
+    /// The model's own class names, in output order, for a detector trained on other classes
+    /// than COCO's 80 (Lock In's own: person, cell phone, tablet, cup).
+    #[serde(default)]
+    pub classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -91,7 +95,13 @@ pub enum Mapping {
     /// The frame was scaled by `r` and centred with padding.
     Letterbox { r: f32, pad_x: f32, pad_y: f32 },
     /// A box was cut out around a person: input = (frame - centre) * s + half input size.
-    Affine { cx: f32, cy: f32, s: f32, half_w: f32, half_h: f32 },
+    Affine {
+        cx: f32,
+        cy: f32,
+        s: f32,
+        half_w: f32,
+        half_h: f32,
+    },
 }
 
 const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
@@ -107,7 +117,9 @@ const NANODET_STD: [f32; 3] = [58.395, 57.12, 57.375];
 fn resize(src: &RgbImage, w: u32, h: u32) -> RgbImage {
     let mut dst = RgbImage::new(w, h);
     let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
-    Resizer::new().resize(src, &mut dst, &opts).expect("RGB to RGB resize cannot fail");
+    Resizer::new()
+        .resize(src, &mut dst, &opts)
+        .expect("RGB to RGB resize cannot fail");
     dst
 }
 
@@ -116,7 +128,9 @@ fn resize(src: &RgbImage, w: u32, h: u32) -> RgbImage {
 fn resize_linear(src: &RgbImage, w: u32, h: u32) -> RgbImage {
     let mut dst = RgbImage::new(w, h);
     let opts = ResizeOptions::new().resize_alg(ResizeAlg::Interpolation(FilterType::Bilinear));
-    Resizer::new().resize(src, &mut dst, &opts).expect("RGB to RGB resize cannot fail");
+    Resizer::new()
+        .resize(src, &mut dst, &opts)
+        .expect("RGB to RGB resize cannot fail");
     dst
 }
 
@@ -141,38 +155,83 @@ pub fn prepare_detector(frame: &RgbImage, m: &ModelInfo) -> Prepared {
     match m.family {
         Family::Rfdetr => {
             let img = resize(frame, w, h);
-            let data = to_nchw(&img, |c, v| (v / 255.0 - IMAGENET_MEAN[c]) / IMAGENET_STD[c]);
-            Prepared { data, shape, map: Mapping::Stretch { w: fw as f32, h: fh as f32 } }
+            let data = to_nchw(&img, |c, v| {
+                (v / 255.0 - IMAGENET_MEAN[c]) / IMAGENET_STD[c]
+            });
+            Prepared {
+                data,
+                shape,
+                map: Mapping::Stretch {
+                    w: fw as f32,
+                    h: fh as f32,
+                },
+            }
         }
         Family::Dfine => {
             let img = resize(frame, w, h);
             let data = to_nchw(&img, |_, v| v / 255.0);
-            Prepared { data, shape, map: Mapping::Stretch { w: fw as f32, h: fh as f32 } }
+            Prepared {
+                data,
+                shape,
+                map: Mapping::Stretch {
+                    w: fw as f32,
+                    h: fh as f32,
+                },
+            }
         }
         Family::Yolo26 => {
             let r = (w as f32 / fw as f32).min(h as f32 / fh as f32);
-            let (nw, nh) = (((fw as f32 * r).round() as u32).max(1), ((fh as f32 * r).round() as u32).max(1));
+            let (nw, nh) = (
+                ((fw as f32 * r).round() as u32).max(1),
+                ((fh as f32 * r).round() as u32).max(1),
+            );
             let scaled = resize(frame, nw, nh);
             let mut canvas = RgbImage::from_pixel(w, h, image::Rgb([114, 114, 114]));
             let (px, py) = ((w - nw) / 2, (h - nh) / 2);
             imageops::replace(&mut canvas, &scaled, px as i64, py as i64);
             let data = to_nchw(&canvas, |_, v| v / 255.0);
-            Prepared { data, shape, map: Mapping::Letterbox { r, pad_x: px as f32, pad_y: py as f32 } }
+            Prepared {
+                data,
+                shape,
+                map: Mapping::Letterbox {
+                    r,
+                    pad_x: px as f32,
+                    pad_y: py as f32,
+                },
+            }
         }
         Family::Yolox => {
             // Scaled to fit and placed in the top-left corner, grey padding, BGR, 0 to 255.
             let r = (w as f32 / fw as f32).min(h as f32 / fh as f32);
-            let (nw, nh) = (((fw as f32 * r) as u32).clamp(1, w), ((fh as f32 * r) as u32).clamp(1, h));
+            let (nw, nh) = (
+                ((fw as f32 * r) as u32).clamp(1, w),
+                ((fh as f32 * r) as u32).clamp(1, h),
+            );
             let scaled = resize_linear(frame, nw, nh);
             let mut canvas = RgbImage::from_pixel(w, h, image::Rgb([114, 114, 114]));
             imageops::replace(&mut canvas, &scaled, 0, 0);
             let data = to_nchw_bgr(&canvas, |_, v| v);
-            Prepared { data, shape, map: Mapping::Letterbox { r, pad_x: 0.0, pad_y: 0.0 } }
+            Prepared {
+                data,
+                shape,
+                map: Mapping::Letterbox {
+                    r,
+                    pad_x: 0.0,
+                    pad_y: 0.0,
+                },
+            }
         }
         Family::Nanodet => {
             let img = resize_linear(frame, w, h);
             let data = to_nchw_bgr(&img, |c, v| (v - NANODET_MEAN[c]) / NANODET_STD[c]);
-            Prepared { data, shape, map: Mapping::Stretch { w: fw as f32, h: fh as f32 } }
+            Prepared {
+                data,
+                shape,
+                map: Mapping::Stretch {
+                    w: fw as f32,
+                    h: fh as f32,
+                },
+            }
         }
         Family::Rtmpose => unreachable!("the pose model needs a person box"),
     }
@@ -233,7 +292,17 @@ pub fn prepare_pose(frame: &RgbImage, m: &ModelInfo, person: [f32; 4]) -> Prepar
             }
         }
     }
-    Prepared { data, shape: [1, 3, oh, ow], map: Mapping::Affine { cx, cy, s, half_w, half_h } }
+    Prepared {
+        data,
+        shape: [1, 3, oh, ow],
+        map: Mapping::Affine {
+            cx,
+            cy,
+            s,
+            half_w,
+            half_h,
+        },
+    }
 }
 
 fn sigmoid(x: f32) -> f32 {
@@ -242,14 +311,18 @@ fn sigmoid(x: f32) -> f32 {
 
 /// COCO's original category ids for its 80 classes, in order. RF-DETR scores classes by these ids.
 const COCO_IDS: [usize; 80] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 31, 32, 33, 34, 35,
-    36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65,
-    67, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28,
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+    56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 67, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84,
+    85, 86, 87, 88, 89, 90,
 ];
 
 fn class_name(family: Family, idx: usize, coco80: &[String]) -> Option<String> {
     match family {
-        Family::Rfdetr => COCO_IDS.iter().position(|&id| id == idx).map(|i| coco80[i].clone()),
+        Family::Rfdetr => COCO_IDS
+            .iter()
+            .position(|&id| id == idx)
+            .map(|i| coco80[i].clone()),
         _ => coco80.get(idx).cloned(),
     }
 }
@@ -263,9 +336,12 @@ fn to_frame(map: Mapping, b: [f32; 4], normalised: bool) -> [f32; 4] {
                 b
             }
         }
-        Mapping::Letterbox { r, pad_x, pad_y } => {
-            [(b[0] - pad_x) / r, (b[1] - pad_y) / r, (b[2] - pad_x) / r, (b[3] - pad_y) / r]
-        }
+        Mapping::Letterbox { r, pad_x, pad_y } => [
+            (b[0] - pad_x) / r,
+            (b[1] - pad_y) / r,
+            (b[2] - pad_x) / r,
+            (b[3] - pad_y) / r,
+        ],
         Mapping::Affine { .. } => b,
     }
 }
@@ -279,23 +355,50 @@ pub struct Output<'a> {
 
 /// Reads a detector's answer. Every query and class pair above `min_score` becomes a detection,
 /// which is how RF-DETR and D-FINE's own post-processing works.
-pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: f32, coco80: &[String]) -> Vec<Detection> {
+pub fn decode_detector(
+    m: &ModelInfo,
+    outs: &[Output],
+    map: Mapping,
+    min_score: f32,
+    coco80: &[String],
+) -> Vec<Detection> {
     let mut found = Vec::new();
+    let own = !m.classes.is_empty();
+    let coco80 = if own { &m.classes[..] } else { coco80 };
+    let class_name = |family: Family, idx: usize, names: &[String]| {
+        if own {
+            names.get(idx).cloned()
+        } else {
+            class_name(family, idx, names)
+        }
+    };
     match m.family {
         Family::Rfdetr | Family::Dfine => {
             // Boxes are the output whose last size is 4; class scores are the other one.
-            let Some(boxes) = outs.iter().find(|o| o.shape.last() == Some(&4)) else { return found };
-            let Some(logits) = outs.iter().find(|o| o.shape.last() != Some(&4)) else { return found };
+            let Some(boxes) = outs.iter().find(|o| o.shape.last() == Some(&4)) else {
+                return found;
+            };
+            let Some(logits) = outs.iter().find(|o| o.shape.last() != Some(&4)) else {
+                return found;
+            };
             let q = boxes.shape[boxes.shape.len() - 2];
             let c = *logits.shape.last().unwrap();
             for i in 0..q {
                 let [cx, cy, w, h] = [0, 1, 2, 3].map(|k| boxes.data[i * 4 + k]);
-                let b = to_frame(map, [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0], true);
+                let b = to_frame(
+                    map,
+                    [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0],
+                    true,
+                );
                 for k in 0..c {
                     let s = sigmoid(logits.data[i * c + k]);
                     if s >= min_score {
                         if let Some(cls) = class_name(m.family, k, coco80) {
-                            found.push(Detection { cls, score: s, box_: b });
+                            found.push(Detection {
+                                cls,
+                                score: s,
+                                box_: b,
+                            });
                         }
                     }
                 }
@@ -311,7 +414,11 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
             for row in o.data.chunks_exact(cols) {
                 if row[4] >= min_score {
                     if let Some(cls) = class_name(m.family, row[5] as usize, coco80) {
-                        found.push(Detection { cls, score: row[4], box_: to_frame(map, [row[0], row[1], row[2], row[3]], false) });
+                        found.push(Detection {
+                            cls,
+                            score: row[4],
+                            box_: to_frame(map, [row[0], row[1], row[2], row[3]], false),
+                        });
                     }
                 }
             }
@@ -328,7 +435,9 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
                 let (gw, gh) = (iw / stride, ih / stride);
                 for gy in 0..gh {
                     for gx in 0..gw {
-                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else { return nms(found, 0.45) };
+                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else {
+                            return nms(found, 0.45);
+                        };
                         row += 1;
                         let obj = r[4];
                         if obj < min_score {
@@ -337,12 +446,20 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
                         let s = stride as f32;
                         let (cx, cy) = ((r[0] + gx as f32) * s, (r[1] + gy as f32) * s);
                         let (bw, bh) = (r[2].exp() * s, r[3].exp() * s);
-                        let b = to_frame(map, [cx - bw / 2.0, cy - bh / 2.0, cx + bw / 2.0, cy + bh / 2.0], false);
+                        let b = to_frame(
+                            map,
+                            [cx - bw / 2.0, cy - bh / 2.0, cx + bw / 2.0, cy + bh / 2.0],
+                            false,
+                        );
                         for k in 0..classes {
                             let score = obj * r[5 + k];
                             if score >= min_score {
                                 if let Some(cls) = class_name(m.family, k, coco80) {
-                                    found.push(Detection { cls, score, box_: b });
+                                    found.push(Detection {
+                                        cls,
+                                        score,
+                                        box_: b,
+                                    });
                                 }
                             }
                         }
@@ -361,10 +478,15 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
             let (iw, ih) = (m.width as f32, m.height as f32);
             let mut row = 0;
             for stride in [8usize, 16, 32, 64] {
-                let (gw, gh) = ((m.width as usize).div_ceil(stride), (m.height as usize).div_ceil(stride));
+                let (gw, gh) = (
+                    (m.width as usize).div_ceil(stride),
+                    (m.height as usize).div_ceil(stride),
+                );
                 for gy in 0..gh {
                     for gx in 0..gw {
-                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else { return nms(found, 0.6) };
+                        let Some(r) = o.data.get(row * cols..(row + 1) * cols) else {
+                            return nms(found, 0.6);
+                        };
                         row += 1;
                         let best = r[..classes].iter().fold(0f32, |a, &b| a.max(b));
                         if best < min_score {
@@ -372,7 +494,9 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
                         }
                         let s = stride as f32;
                         let (px, py) = (gx as f32 * s, gy as f32 * s);
-                        let d: [f32; 4] = std::array::from_fn(|side| expected_bin(&r[classes + side * bins..classes + (side + 1) * bins]) * s);
+                        let d: [f32; 4] = std::array::from_fn(|side| {
+                            expected_bin(&r[classes + side * bins..classes + (side + 1) * bins]) * s
+                        });
                         let b = [
                             (px - d[0]).clamp(0.0, iw) / iw,
                             (py - d[1]).clamp(0.0, ih) / ih,
@@ -383,7 +507,11 @@ pub fn decode_detector(m: &ModelInfo, outs: &[Output], map: Mapping, min_score: 
                         for (k, &score) in r[..classes].iter().enumerate() {
                             if score >= min_score {
                                 if let Some(cls) = class_name(m.family, k, coco80) {
-                                    found.push(Detection { cls, score, box_: b });
+                                    found.push(Detection {
+                                        cls,
+                                        score,
+                                        box_: b,
+                                    });
                                 }
                             }
                         }
@@ -416,7 +544,10 @@ fn nms(mut found: Vec<Detection>, threshold: f32) -> Vec<Detection> {
     found.sort_by(|a, b| b.score.total_cmp(&a.score));
     let mut kept: Vec<Detection> = Vec::new();
     for d in found {
-        if !kept.iter().any(|k| k.cls == d.cls && iou(k.box_, d.box_) > threshold) {
+        if !kept
+            .iter()
+            .any(|k| k.cls == d.cls && iou(k.box_, d.box_) > threshold)
+        {
             kept.push(d);
         }
     }
@@ -426,18 +557,40 @@ fn nms(mut found: Vec<Detection>, threshold: f32) -> Vec<Detection> {
 /// Reads RTMPose's answer: for each of the 17 points, the most likely column and row
 /// (at twice the input resolution), mapped back onto the frame.
 pub fn decode_pose(outs: &[Output], map: Mapping) -> Vec<Keypoint> {
-    let Mapping::Affine { cx, cy, s, half_w, half_h } = map else { return vec![] };
-    let Some(sx) = outs.iter().find(|o| o.name.contains('x')) else { return vec![] };
-    let Some(sy) = outs.iter().find(|o| o.name.contains('y')) else { return vec![] };
+    let Mapping::Affine {
+        cx,
+        cy,
+        s,
+        half_w,
+        half_h,
+    } = map
+    else {
+        return vec![];
+    };
+    let Some(sx) = outs.iter().find(|o| o.name.contains('x')) else {
+        return vec![];
+    };
+    let Some(sy) = outs.iter().find(|o| o.name.contains('y')) else {
+        return vec![];
+    };
     let k = sx.shape[sx.shape.len() - 2];
     let (wx, wy) = (*sx.shape.last().unwrap(), *sy.shape.last().unwrap());
-    let argmax = |row: &[f32]| row.iter().enumerate().fold((0usize, f32::MIN), |b, (i, &v)| if v > b.1 { (i, v) } else { b });
+    let argmax = |row: &[f32]| {
+        row.iter().enumerate().fold(
+            (0usize, f32::MIN),
+            |b, (i, &v)| if v > b.1 { (i, v) } else { b },
+        )
+    };
     (0..k)
         .map(|j| {
             let (ix, vx) = argmax(&sx.data[j * wx..(j + 1) * wx]);
             let (iy, vy) = argmax(&sy.data[j * wy..(j + 1) * wy]);
             let (px, py) = (ix as f32 / 2.0, iy as f32 / 2.0);
-            Keypoint { x: (px - half_w) / s + cx, y: (py - half_h) / s + cy, score: (vx + vy) / 2.0 }
+            Keypoint {
+                x: (px - half_w) / s + cx,
+                y: (py - half_h) / s + cy,
+                score: (vx + vy) / 2.0,
+            }
         })
         .collect()
 }
@@ -467,6 +620,7 @@ mod tests {
             sha256: String::new(),
             cpu_only: false,
             timing_only: false,
+            classes: Vec::new(),
         }
     }
 
@@ -475,10 +629,15 @@ mod tests {
         let frame = RgbImage::new(640, 480);
         let p = prepare_detector(&frame, &info(Family::Yolo26, 416, 416));
         // 640x480 scaled to 416x312, padded 52 px top and bottom.
-        let Mapping::Letterbox { r, pad_x, pad_y } = p.map else { panic!() };
+        let Mapping::Letterbox { r, pad_x, pad_y } = p.map else {
+            panic!()
+        };
         assert!((r - 0.65).abs() < 1e-6 && pad_x == 0.0 && pad_y == 52.0);
         let b = to_frame(p.map, [0.0, 52.0, 416.0, 364.0], false);
-        assert!(b.iter().zip([0.0, 0.0, 640.0, 480.0]).all(|(a, e)| (a - e).abs() < 0.5));
+        assert!(b
+            .iter()
+            .zip([0.0, 0.0, 640.0, 480.0])
+            .all(|(a, e)| (a - e).abs() < 0.5));
     }
 
     #[test]
@@ -488,20 +647,41 @@ mod tests {
         let m = info(Family::Rtmpose, 192, 256);
         let p = prepare_pose(&frame, &m, [80.0, 60.0, 120.0, 140.0]);
         // The box centre (100, 100) lands on the middle of the input.
-        let Mapping::Affine { cx, cy, s, half_w, half_h } = p.map else { panic!() };
+        let Mapping::Affine {
+            cx,
+            cy,
+            s,
+            half_w,
+            half_h,
+        } = p.map
+        else {
+            panic!()
+        };
         let (ix, iy) = ((100.0 - cx) * s + half_w, (100.0 - cy) * s + half_h);
         assert!((ix - 96.0).abs() < 1e-3 && (iy - 128.0).abs() < 1e-3);
         let plane = 192 * 256;
-        assert!(p.data[plane + 128 * 192 + 96] > 0.0, "white pixel should be bright after normalising");
+        assert!(
+            p.data[plane + 128 * 192 + 96] > 0.0,
+            "white pixel should be bright after normalising"
+        );
     }
 
     #[test]
     fn rfdetr_classes_use_coco_ids() {
         let coco80: Vec<String> = (0..80).map(|i| format!("c{i}")).collect();
-        assert_eq!(class_name(Family::Rfdetr, 1, &coco80).as_deref(), Some("c0"));
-        assert_eq!(class_name(Family::Rfdetr, 77, &coco80).as_deref(), Some("c67"));
+        assert_eq!(
+            class_name(Family::Rfdetr, 1, &coco80).as_deref(),
+            Some("c0")
+        );
+        assert_eq!(
+            class_name(Family::Rfdetr, 77, &coco80).as_deref(),
+            Some("c67")
+        );
         assert_eq!(class_name(Family::Rfdetr, 12, &coco80), None);
-        assert_eq!(class_name(Family::Dfine, 67, &coco80).as_deref(), Some("c67"));
+        assert_eq!(
+            class_name(Family::Dfine, 67, &coco80).as_deref(),
+            Some("c67")
+        );
     }
 
     #[test]
@@ -511,23 +691,84 @@ mod tests {
         let boxes = [0.5, 0.5, 0.2, 0.4, 0.1, 0.1, 0.1, 0.1];
         let logits: Vec<f32> = (0..160).map(|i| if i == 0 { 3.0 } else { -9.0 }).collect();
         let outs = [
-            Output { name: "logits", shape: vec![1, 2, 80], data: &logits },
-            Output { name: "pred_boxes", shape: vec![1, 2, 4], data: &boxes },
+            Output {
+                name: "logits",
+                shape: vec![1, 2, 80],
+                data: &logits,
+            },
+            Output {
+                name: "pred_boxes",
+                shape: vec![1, 2, 4],
+                data: &boxes,
+            },
         ];
-        let d = decode_detector(&m, &outs, Mapping::Stretch { w: 100.0, h: 200.0 }, 0.3, &coco80);
+        let d = decode_detector(
+            &m,
+            &outs,
+            Mapping::Stretch { w: 100.0, h: 200.0 },
+            0.3,
+            &coco80,
+        );
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].cls, "c0");
-        assert!(d[0].box_.iter().zip([40.0, 60.0, 60.0, 140.0]).all(|(a, e)| (a - e).abs() < 1e-3));
+        assert!(d[0]
+            .box_
+            .iter()
+            .zip([40.0, 60.0, 60.0, 140.0])
+            .all(|(a, e)| (a - e).abs() < 1e-3));
     }
 
     #[test]
     fn grid_detectors_keep_one_box_per_object() {
-        let d = |cls: &str, score: f32, x: f32| Detection { cls: cls.into(), score, box_: [x, 0.0, x + 100.0, 100.0] };
-        let kept = nms(vec![d("person", 0.6, 5.0), d("person", 0.9, 0.0), d("cup", 0.5, 0.0), d("person", 0.7, 300.0)], 0.45);
+        let d = |cls: &str, score: f32, x: f32| Detection {
+            cls: cls.into(),
+            score,
+            box_: [x, 0.0, x + 100.0, 100.0],
+        };
+        let kept = nms(
+            vec![
+                d("person", 0.6, 5.0),
+                d("person", 0.9, 0.0),
+                d("cup", 0.5, 0.0),
+                d("person", 0.7, 300.0),
+            ],
+            0.45,
+        );
         let got: Vec<(&str, f32)> = kept.iter().map(|k| (k.cls.as_str(), k.score)).collect();
         assert_eq!(got, vec![("person", 0.9), ("person", 0.7), ("cup", 0.5)]);
         assert!((expected_bin(&[0.0, 0.0]) - 0.5).abs() < 1e-6);
         assert!((expected_bin(&[-50.0, -50.0, 10.0]) - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn own_classes_name_a_nanodet_detector() {
+        // A 64 px NanoDet-Plus with 4 classes: 8x8 + 4x4 + 2x2 + 1x1 = 85 rows of 4 scores and 32 bins.
+        let mut m = info(Family::Nanodet, 64, 64);
+        m.classes = ["person", "cell phone", "tablet", "cup"]
+            .map(String::from)
+            .to_vec();
+        let mut data = vec![0.0f32; 85 * 36];
+        let r = 9 * 36; // the centre point at (8, 8) on stride 8
+        data[r + 1] = 0.9; // cell phone
+        for side in 0..4 {
+            data[r + 4 + side * 8 + 1] = 20.0; // every side one bin (8 px) away
+        }
+        let outs = [Output {
+            name: "output",
+            shape: vec![1, 85, 36],
+            data: &data,
+        }];
+        let d = decode_detector(&m, &outs, Mapping::Stretch { w: 64.0, h: 64.0 }, 0.3, &[]);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].cls, "cell phone");
+        assert!(
+            d[0].box_
+                .iter()
+                .zip([0.0, 0.0, 16.0, 16.0])
+                .all(|(a, b)| (a - b).abs() < 0.01),
+            "{:?}",
+            d[0].box_
+        );
     }
 
     #[test]

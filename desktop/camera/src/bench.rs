@@ -104,19 +104,32 @@ type RawOutputs = Vec<(String, Vec<usize>, Vec<f32>)>;
 /// Runs a session once and copies out every float output.
 fn infer(session: &mut ort::session::Session, p: &Prepared) -> Result<RawOutputs, String> {
     let input = session.inputs()[0].name().to_string();
-    let tensor = ort::value::Tensor::from_array((p.shape, p.data.clone())).map_err(|e| e.to_string())?;
-    let outputs = session.run(ort::inputs![input => tensor]).map_err(|e| e.to_string())?;
+    let tensor =
+        ort::value::Tensor::from_array((p.shape, p.data.clone())).map_err(|e| e.to_string())?;
+    let outputs = session
+        .run(ort::inputs![input => tensor])
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for (name, value) in outputs.iter() {
         if let Ok((shape, data)) = value.try_extract_tensor::<f32>() {
-            out.push((name.to_string(), shape.iter().map(|&d| d.max(0) as usize).collect(), data.to_vec()));
+            out.push((
+                name.to_string(),
+                shape.iter().map(|&d| d.max(0) as usize).collect(),
+                data.to_vec(),
+            ));
         }
     }
     Ok(out)
 }
 
 fn as_outputs(raw: &RawOutputs) -> Vec<Output<'_>> {
-    raw.iter().map(|(n, s, d)| Output { name: n, shape: s.clone(), data: d }).collect()
+    raw.iter()
+        .map(|(n, s, d)| Output {
+            name: n,
+            shape: s.clone(),
+            data: d,
+        })
+        .collect()
 }
 
 /// Times one model on one engine. Returns the timing and the last answer.
@@ -168,13 +181,19 @@ fn compare_detections(ours: &[Detection], reference: &Value) -> Value {
         .flatten()
         .filter_map(|d| {
             let b = d["box"].as_array()?;
-            Some((d["cls"].as_str()?.to_string(), d["score"].as_f64()? as f32, [0, 1, 2, 3].map(|i| b[i].as_f64().unwrap_or(0.0) as f32)))
+            Some((
+                d["cls"].as_str()?.to_string(),
+                d["score"].as_f64()? as f32,
+                [0, 1, 2, 3].map(|i| b[i].as_f64().unwrap_or(0.0) as f32),
+            ))
         })
         .filter(|(_, s, _)| *s >= 0.5)
         .collect();
     let mut missed = Vec::new();
     for (cls, score, b) in &refs {
-        let hit = ours.iter().any(|d| &d.cls == cls && vision::iou(d.box_, *b) >= 0.8 && (d.score - score).abs() <= 0.1);
+        let hit = ours.iter().any(|d| {
+            &d.cls == cls && vision::iou(d.box_, *b) >= 0.8 && (d.score - score).abs() <= 0.1
+        });
         if !hit {
             missed.push(json!({ "cls": cls, "score": score }));
         }
@@ -183,13 +202,24 @@ fn compare_detections(ours: &[Detection], reference: &Value) -> Value {
 }
 
 fn compare_pose(ours: &[Keypoint], reference: &Value) -> Value {
-    let Some(r) = reference.as_array().and_then(|a| a.first()) else { return Value::Null };
-    let Some(kps) = r["keypoints"].as_array() else { return Value::Null };
-    let b = r["box"].as_array().map(|b| b[3].as_f64().unwrap_or(1.0) - b[1].as_f64().unwrap_or(0.0)).unwrap_or(1.0) as f32;
+    let Some(r) = reference.as_array().and_then(|a| a.first()) else {
+        return Value::Null;
+    };
+    let Some(kps) = r["keypoints"].as_array() else {
+        return Value::Null;
+    };
+    let b = r["box"]
+        .as_array()
+        .map(|b| b[3].as_f64().unwrap_or(1.0) - b[1].as_f64().unwrap_or(0.0))
+        .unwrap_or(1.0) as f32;
     let mut worst = 0f32;
     let mut used = 0;
     for (k, ours) in kps.iter().zip(ours) {
-        let (x, y, s) = (k[0].as_f64().unwrap_or(0.0) as f32, k[1].as_f64().unwrap_or(0.0) as f32, k[2].as_f64().unwrap_or(0.0) as f32);
+        let (x, y, s) = (
+            k[0].as_f64().unwrap_or(0.0) as f32,
+            k[1].as_f64().unwrap_or(0.0) as f32,
+            k[2].as_f64().unwrap_or(0.0) as f32,
+        );
         if s < 0.5 {
             continue;
         }
@@ -203,35 +233,59 @@ fn compare_pose(ours: &[Keypoint], reference: &Value) -> Value {
 fn agrees(cpu: &[Detection], gpu: &[Detection]) -> bool {
     match (cpu.first(), gpu.first()) {
         (None, None) => true,
-        (Some(a), Some(b)) => a.cls == b.cls && (a.score - b.score).abs() <= 0.05 && vision::iou(a.box_, b.box_) >= 0.9,
+        (Some(a), Some(b)) => {
+            a.cls == b.cls
+                && (a.score - b.score).abs() <= 0.05
+                && vision::iou(a.box_, b.box_) >= 0.9
+        }
         _ => false,
     }
 }
 
 pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Result<Value, String> {
     let manifest_path = opts.models_dir.join("manifest.json");
-    let manifest: Manifest = serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?)
-        .map_err(|e| format!("manifest.json: {e}"))?;
+    let manifest: Manifest = serde_json::from_slice(
+        &std::fs::read(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?,
+    )
+    .map_err(|e| format!("manifest.json: {e}"))?;
     let reference: Value = match &opts.reference {
-        Some(p) => serde_json::from_slice(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| e.to_string())?,
+        Some(p) => {
+            serde_json::from_slice(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?)
+                .map_err(|e| e.to_string())?
+        }
         None => Value::Null,
     };
 
     // Only the models shipped on this computer are timed (YOLO26n is only timed in CI).
-    let models: Vec<&ModelInfo> = manifest.models.iter().filter(|m| opts.models_dir.join(&m.file).exists()).collect();
+    let models: Vec<&ModelInfo> = manifest
+        .models
+        .iter()
+        .filter(|m| opts.models_dir.join(&m.file).exists())
+        .collect();
     if models.is_empty() {
         return Err("No camera models found".into());
     }
     for m in &models {
         let p = opts.models_dir.join(&m.file);
-        let ok = std::fs::metadata(&p).map(|md| md.len() == m.bytes).unwrap_or(false) && sha256(&p).map(|h| h == m.sha256).unwrap_or(false);
+        let ok = std::fs::metadata(&p)
+            .map(|md| md.len() == m.bytes)
+            .unwrap_or(false)
+            && sha256(&p).map(|h| h == m.sha256).unwrap_or(false);
         if !ok {
             return Err(format!("{} is damaged; reinstall Lock In", m.file));
         }
     }
 
     let env = runtime::load(opts.ort.as_deref())?;
-    let total: usize = models.iter().map(|m| opts.engines.iter().filter(|e| !(e.is_gpu() && m.cpu_only)).count()).sum();
+    let total: usize = models
+        .iter()
+        .map(|m| {
+            opts.engines
+                .iter()
+                .filter(|e| !(e.is_gpu() && m.cpu_only))
+                .count()
+        })
+        .sum();
     let mut step = 0;
     let mut gpu_missing: Option<String> = None;
     let mut person: Option<[f32; 4]> = None;
@@ -249,7 +303,13 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
             let (w, h) = (frame.width() as f32, frame.height() as f32);
             [w * 0.2, h * 0.1, w * 0.8, h * 0.95]
         });
-        let prepare = |f: &RgbImage| if detector { vision::prepare_detector(f, m) } else { vision::prepare_pose(f, m, box_) };
+        let prepare = |f: &RgbImage| {
+            if detector {
+                vision::prepare_detector(f, m)
+            } else {
+                vision::prepare_pose(f, m, box_)
+            }
+        };
         let mut preps: Vec<f64> = (0..5)
             .map(|_| {
                 let t = Instant::now();
@@ -280,10 +340,13 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
                 continue;
             }
             step += 1;
-            emit(json!({ "type": "progress", "step": step, "total": total, "model": m.label, "size": m.width, "engine": engine.key(), "where": engine.describe() }));
+            emit(
+                json!({ "type": "progress", "step": step, "total": total, "model": m.label, "size": m.width, "engine": engine.key(), "where": engine.describe() }),
+            );
             if engine.is_gpu() {
                 if let Some(e) = &gpu_missing {
-                    r.engines.insert(engine.key(), Outcome::Err { error: e.clone() });
+                    r.engines
+                        .insert(engine.key(), Outcome::Err { error: e.clone() });
                     continue;
                 }
             }
@@ -291,11 +354,13 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
                 Ok((mut timing, raw)) => {
                     let outs = as_outputs(&raw);
                     if detector {
-                        let found = vision::decode_detector(m, &outs, input.map, 0.3, &manifest.coco80);
+                        let found =
+                            vision::decode_detector(m, &outs, input.map, 0.3, &manifest.coco80);
                         match &cpu_found {
                             None => {
                                 if person.is_none() {
-                                    person = found.iter().find(|d| d.cls == "person").map(|d| d.box_);
+                                    person =
+                                        found.iter().find(|d| d.cls == "person").map(|d| d.box_);
                                 }
                                 cpu_found = Some(found.clone());
                                 r.found = found;
@@ -319,7 +384,11 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
         }
 
         if let Some(rf) = reference.get(&m.id) {
-            r.reference = Some(if detector { compare_detections(&r.found, rf) } else { compare_pose(&r.keypoints, rf) });
+            r.reference = Some(if detector {
+                compare_detections(&r.found, rf)
+            } else {
+                compare_pose(&r.keypoints, rf)
+            });
         }
         results.push(r);
     }
@@ -329,7 +398,13 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
     let mut checks = Vec::new();
     for c in &manifest.checks {
         let parts = [&c.frame, &c.hands, &c.pose];
-        let Some(rs) = parts.iter().map(|id| by_id.get(id.as_str()).copied()).collect::<Option<Vec<_>>>() else { continue };
+        let Some(rs) = parts
+            .iter()
+            .map(|id| by_id.get(id.as_str()).copied())
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
         let mut engines = HashMap::new();
         for &engine in &opts.engines {
             let mut ms = 0.0;
@@ -337,7 +412,11 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
             let mut ok = true;
             for r in &rs {
                 // An 8-bit model has no graphics-chip run; its CPU number stands in.
-                let key = if engine.is_gpu() && !r.engines.contains_key(engine.key()) { Engine::Cpu.key() } else { engine.key() };
+                let key = if engine.is_gpu() && !r.engines.contains_key(engine.key()) {
+                    Engine::Cpu.key()
+                } else {
+                    engine.key()
+                };
                 match r.engines.get(key) {
                     Some(Outcome::Ok(t)) => {
                         ms += t.ms + r.prep_ms;
@@ -350,7 +429,10 @@ pub fn run(opts: &Options, frame: RgbImage, emit: &mut dyn FnMut(Value)) -> Resu
                 engines.insert(engine.key(), json!({ "ms": (ms * 10.0).round() / 10.0, "cpu_ms": (cpu * 10.0).round() / 10.0 }));
             }
         }
-        checks.push(CheckResult { name: c.name.clone(), engines });
+        checks.push(CheckResult {
+            name: c.name.clone(),
+            engines,
+        });
     }
 
     Ok(json!({

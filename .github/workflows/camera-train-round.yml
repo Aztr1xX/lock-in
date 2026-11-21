@@ -1,0 +1,142 @@
+name: Camera detector training (one run)
+
+# One run of .github/workflows/camera-train.yml: carries on from the saved progress, trains until
+# its time is up, saves progress, and when training is done, exports, tests and publishes.
+
+on:
+  workflow_call:
+    inputs:
+      round:
+        type: number
+        required: true
+      fresh:
+        type: boolean
+        default: false
+    outputs:
+      done:
+        value: ${{ jobs.train.outputs.done }}
+
+permissions:
+  contents: write
+
+env:
+  NANODET_SHA: be9b4a9001d7f9b6fc89c2df31ae8d428e35b4f0
+  COCO_CKPT: https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-plus-m_416_checkpoint.ckpt
+  COCO_ONNX: https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-plus-m_416.onnx
+  STATE_TAG: camera-train-state
+  MODELS_TAG: camera-models-lockin-1
+  EPOCHS: 8
+  # Minutes from the start of the run until training must stop, leaving time to save and test.
+  TRAIN_BUDGET_MIN: 290
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      done: ${{ steps.train.outputs.done }}
+    steps:
+      - name: Note the start time and the machine
+        run: |
+          echo "START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "ROUND=${{ inputs.round }}" >> "$GITHUB_ENV"
+          echo "CPUs: $(nproc)"; free -g; df -h .
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install NanoDet and CPU-only PyTorch 1.13 (the version NanoDet supports)
+        run: |
+          pip install --upgrade pip "setuptools<70" wheel
+          pip install torch==1.13.1+cpu torchvision==0.14.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install "pytorch-lightning==1.9.5" "torchmetrics<1" "numpy<2" Cython imagesize matplotlib "omegaconf>=2.0.1" \
+            onnx onnxsim onnxruntime opencv-python-headless pyaml pycocotools tabulate tensorboard termcolor tqdm pillow
+          git clone -q https://github.com/RangiLyu/nanodet nanodet-src
+          git -C nanodet-src checkout -q "$NANODET_SHA"
+
+      - name: Training key (changes when the data, the start or the training changes)
+        run: |
+          key=$(cat desktop/camera/train/data.py desktop/camera/train/weights.py desktop/camera/train/train.py | sha256sum | cut -c1-12)
+          echo "KEY=$key-e$EPOCHS" >> "$GITHUB_ENV"
+
+      - name: Restore the pictures
+        id: data
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: camera-train-data-${{ hashFiles('desktop/camera/train/data.py') }}
+
+      - name: Download the pictures (Open Images and COCO)
+        if: steps.data.outputs.cache-hit != 'true'
+        run: python desktop/camera/train/data.py data
+
+      - name: Keep the pictures for the next run
+        if: steps.data.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: camera-train-data-${{ hashFiles('desktop/camera/train/data.py') }}
+
+      - name: Pick up where the last run stopped
+        run: |
+          mkdir -p run
+          if [ "${{ inputs.fresh }}" != "true" ] && gh release download "$STATE_TAG" -p "state-$KEY.tar.gz" -D . --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            tar xzf "state-$KEY.tar.gz"
+            echo "Carrying on: $(head -1 run/status.txt 2>/dev/null)"
+          else
+            echo "Starting fresh"
+          fi
+
+      - name: Start from the COCO weights
+        run: |
+          curl -sSLf -o coco.ckpt "$COCO_CKPT"
+          python desktop/camera/train/weights.py coco.ckpt start.ckpt
+
+      - name: Train
+        id: train
+        run: |
+          left=$(( TRAIN_BUDGET_MIN * 60 - ($(date +%s) - START) ))
+          hours=$(python -c "print(max(0.1, $left / 3600))")
+          echo "Training for up to $hours hours"
+          python desktop/camera/train/train.py --nanodet nanodet-src --data data --start start.ckpt --out run --epochs "$EPOCHS" --hours "$hours"
+          cat run/status.txt
+          if grep -q '^done' run/status.txt; then echo "DONE=1" >> "$GITHUB_ENV"; echo "done=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Save progress
+        if: always()
+        run: |
+          [ -f run/model_last.ckpt ] || { echo "Nothing to save yet"; exit 0; }
+          tar czf "state-$KEY.tar.gz" run/model_last.ckpt run/config.yml run/status.txt $( [ -d run/model_best ] && echo run/model_best )
+          if ! gh release view "$STATE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "Camera training progress (not an app release)" \
+              --notes "Saved progress of .github/workflows/camera-train.yml, so a training can carry on across runs. Nothing here is for the app."
+          fi
+          gh release upload "$STATE_TAG" "state-$KEY.tar.gz" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Export to ONNX
+        if: env.DONE == '1'
+        run: python desktop/camera/train/export.py --nanodet nanodet-src --run run --out out
+
+      - name: Test against the COCO model
+        if: env.DONE == '1'
+        continue-on-error: true
+        run: |
+          curl -sSLf -o coco.onnx "$COCO_ONNX"
+          python desktop/camera/train/evaluate.py --data data --new out/lockin-det-416.onnx --base coco.onnx --out report || echo "VERDICT=worse" >> "$GITHUB_ENV"
+          { echo "### Lock In detector vs NanoDet-Plus (COCO)"; echo; cat report/evaluation.md; echo; grep -h "mAP\|class" -m 20 run/logs-*/*.txt | tail -6 || true; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the model and its test
+        if: env.DONE == '1'
+        run: |
+          cp run/config.yml out/lockin-det-config.yml
+          cp report/evaluation.md report/evaluation.json out/ 2>/dev/null || true
+          if ! gh release view "$MODELS_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$MODELS_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "Lock In detector (not an app release)" \
+              --notes "Lock In's own camera detector (person, phone, tablet, drink), trained by .github/workflows/camera-train.yml on Open Images and COCO, with its test against the COCO model. Apache 2.0 (NanoDet-Plus)."
+          fi
+          gh release upload "$MODELS_TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"

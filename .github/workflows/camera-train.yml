@@ -1,0 +1,52 @@
+name: Camera detector training
+
+# Trains Lock In's own detector (camera plan, step 4): NanoDet-Plus-m with four classes (person,
+# phone, tablet, drink), from its COCO weights, on public Open Images and COCO pictures. See
+# desktop/camera/train/. Runs on the CPU.
+#
+# One training takes longer than a job may last (6 hours), so it runs as up to four jobs in a row
+# (camera-train-round.yml). Each stops in time, saves its progress to the "camera-train-state"
+# pre-release, and the next carries on. When training is done, the job exports the model, tests it
+# against the COCO model it started from, and publishes both to the "camera-models-lockin-1"
+# pre-release. Neither pre-release is ever "latest", so the app's updater ignores them. The app
+# only takes the model up in a later change, and only if the test says it's better.
+
+on:
+  push:
+    branches: [claude/project-thread-oj1hba]
+    paths: ["desktop/camera/train/**", ".github/workflows/camera-train*.yml"]
+  workflow_dispatch:
+    inputs:
+      fresh:
+        description: "Start over instead of carrying on"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: camera-train
+  cancel-in-progress: false
+
+jobs:
+  run1:
+    uses: ./.github/workflows/camera-train-round.yml
+    with:
+      round: 1
+      fresh: ${{ inputs.fresh == true }}
+  run2:
+    needs: run1
+    if: needs.run1.outputs.done != '1'
+    uses: ./.github/workflows/camera-train-round.yml
+    with: { round: 2 }
+  run3:
+    needs: run2
+    if: needs.run2.outputs.done != '1'
+    uses: ./.github/workflows/camera-train-round.yml
+    with: { round: 3 }
+  run4:
+    needs: run3
+    if: needs.run3.outputs.done != '1'
+    uses: ./.github/workflows/camera-train-round.yml
+    with: { round: 4 }

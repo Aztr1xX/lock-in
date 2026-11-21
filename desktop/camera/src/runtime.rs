@@ -52,13 +52,20 @@ impl Engine {
 
 /// Finds a file shipped next to this exe (or given on the command line).
 pub fn beside_exe(name: &str) -> PathBuf {
-    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(name))).unwrap_or_else(|| PathBuf::from(name))
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(name)))
+        .unwrap_or_else(|| PathBuf::from(name))
 }
 
 /// Loads ONNX Runtime from the DLL shipped with the app, never one found elsewhere on the PC
 /// (Windows ships its own copies of onnxruntime.dll and DirectML.dll in System32).
 pub fn load(ort_path: Option<&Path>) -> Result<ort::environment::Environment, String> {
-    let default = beside_exe(if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" });
+    let default = beside_exe(if cfg!(windows) {
+        "onnxruntime.dll"
+    } else {
+        "libonnxruntime.so"
+    });
     let path = ort_path.map(Path::to_path_buf).unwrap_or(default);
     if !path.exists() {
         return Err(format!("ONNX Runtime is missing ({})", path.display()));
@@ -71,12 +78,19 @@ pub fn load(ort_path: Option<&Path>) -> Result<ort::environment::Environment, St
         }
     }
     let builder = ort::init_from(&path).map_err(|e| format!("could not load ONNX Runtime: {e}"))?;
-    builder.with_name("lockin-camera").build().map_err(|e| format!("could not start ONNX Runtime: {e}"))
+    builder
+        .with_name("lockin-camera")
+        .build()
+        .map_err(|e| format!("could not start ONNX Runtime: {e}"))
 }
 
 /// Opens one model on one engine. Fails (instead of quietly falling back to the CPU) if the
 /// graphics chip can't be used, so a "GPU" number is always a real GPU number.
-pub fn open(env: &ort::environment::Environment, model: &Path, engine: Engine) -> Result<Session, String> {
+pub fn open(
+    env: &ort::environment::Environment,
+    model: &Path,
+    engine: Engine,
+) -> Result<Session, String> {
     let err = |e: ort::Error<ort::session::builder::SessionBuilder>| e.to_string();
     let mut b = Session::builder(env)
         .map_err(|e| e.to_string())?
@@ -97,7 +111,10 @@ pub fn open(env: &ort::environment::Environment, model: &Path, engine: Engine) -
             } else {
                 ep::directml::PerformancePreference::MinimumPower
             };
-            let dml = ep::DirectML::default().with_performance_preference(pref).build().error_on_failure();
+            let dml = ep::DirectML::default()
+                .with_performance_preference(pref)
+                .build()
+                .error_on_failure();
             b.with_memory_pattern(false)
                 .map_err(err)?
                 .with_parallel_execution(false)
