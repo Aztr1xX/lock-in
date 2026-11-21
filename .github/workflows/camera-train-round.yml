@@ -57,10 +57,13 @@ jobs:
           git clone -q https://github.com/RangiLyu/nanodet nanodet-src
           git -C nanodet-src checkout -q "$NANODET_SHA"
 
-      - name: Training key (changes when the data, the start or the training changes)
+      # Only what makes saved progress useless (other pictures, another start, another length) is in
+      # the key, so a fix to train.py carries on. OLD_KEY is the progress saved before that rule.
+      - name: Training key (changes when the pictures, the start or the length changes)
         run: |
-          key=$(cat desktop/camera/train/data.py desktop/camera/train/weights.py desktop/camera/train/train.py | sha256sum | cut -c1-12)
-          echo "KEY=$key-e$EPOCHS" >> "$GITHUB_ENV"
+          key=$(cat desktop/camera/train/data.py desktop/camera/train/weights.py | sha256sum | cut -c1-12)
+          echo "KEY=d$key-e$EPOCHS" >> "$GITHUB_ENV"
+          echo "OLD_KEY=9da5b83646c6-e8" >> "$GITHUB_ENV"
 
       - name: Restore the pictures
         id: data
@@ -83,7 +86,8 @@ jobs:
       - name: Pick up where the last run stopped
         run: |
           mkdir -p run
-          if [ "${{ inputs.fresh }}" != "true" ] && gh release download "$STATE_TAG" -p "state-$KEY.tar.gz" -D . --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+          if [ "${{ inputs.fresh }}" != "true" ] && { gh release download "$STATE_TAG" -p "state-$KEY.tar.gz" -D . --repo "$GITHUB_REPOSITORY" 2>/dev/null \
+              || { gh release download "$STATE_TAG" -p "state-$OLD_KEY.tar.gz" -O "state-$KEY.tar.gz" --repo "$GITHUB_REPOSITORY" 2>/dev/null && echo "From the earlier save"; }; }; then
             tar xzf "state-$KEY.tar.gz"
             echo "Carrying on: $(head -1 run/status.txt 2>/dev/null)"
           else

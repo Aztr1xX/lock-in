@@ -34,7 +34,14 @@ def main():
     from nanodet.evaluator import build_evaluator
     from nanodet.trainer.task import TrainingTask
     from nanodet.util import NanoDetLightningLogger, cfg, load_config, load_model_weight
-    from pytorch_lightning.callbacks import TQDMProgressBar
+    from pytorch_lightning.callbacks import Timer, TQDMProgressBar
+
+    class RunTimer(Timer):
+        """Lightning's time limit, counted from this run's start. The stock one saves the time used
+        so far in the checkpoint and adds it back on resume, so a run carrying on would stop at once."""
+
+        def load_state_dict(self, state_dict):
+            pass
 
     sys.path.insert(0, str(Path(__file__).parent))
     from data import CLASSES
@@ -88,20 +95,23 @@ def main():
     trainer = pl.Trainer(
         default_root_dir=str(out),
         max_epochs=a.epochs,
-        max_time=timedelta(hours=a.hours),
         check_val_every_n_epoch=1,
         accelerator="cpu",
         log_every_n_steps=cfg.log.interval,
         num_sanity_val_steps=0,
-        callbacks=[TQDMProgressBar(refresh_rate=0)],
+        callbacks=[TQDMProgressBar(refresh_rate=0), RunTimer(duration=timedelta(hours=a.hours), interval="step")],
         logger=logger,
         gradient_clip_val=cfg.get("grad_clip", 0.0),
         enable_checkpointing=False,
     )
-    trainer.fit(task, loader(train_set, True), loader(val_set, False), ckpt_path=str(last) if last.exists() else None)
-    done = trainer.current_epoch >= a.epochs
-    (out / "status.txt").write_text(f"epochs {trainer.current_epoch} of {a.epochs}\n{'done' if done else 'unfinished'}\n")
-    print(f"Finished {trainer.current_epoch} of {a.epochs} epochs", flush=True)
+    train_loader = loader(train_set, True)
+    trainer.fit(task, train_loader, loader(val_set, False), ckpt_path=str(last) if last.exists() else None)
+    # Counted in steps: a run stopped partway through the last epoch already shows it as reached.
+    total = a.epochs * len(train_loader)
+    step = trainer.global_step
+    done = step >= total
+    (out / "status.txt").write_text(f"epochs {step / len(train_loader):.2f} of {a.epochs} (step {step} of {total})\n{'done' if done else 'unfinished'}\n")
+    print(f"Trained {step} of {total} steps", flush=True)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ name: Camera detector training
 # phone, tablet, drink), from its COCO weights, on public Open Images and COCO pictures. See
 # desktop/camera/train/. Runs on the CPU.
 #
-# One training takes longer than a job may last (6 hours), so it runs as up to four jobs in a row
+# One training takes longer than a job may last (6 hours), so it runs as up to five jobs in a row
 # (camera-train-round.yml). Each stops in time, saves its progress to the "camera-train-state"
 # pre-release, and the next carries on. When training is done, the job exports the model, tests it
 # against the COCO model it started from, and publishes both to the "camera-models-lockin-1"
@@ -50,3 +50,8 @@ jobs:
     if: needs.run3.outputs.done != '1'
     uses: ./.github/workflows/camera-train-round.yml
     with: { round: 4 }
+  run5:
+    needs: run4
+    if: needs.run4.outputs.done != '1'
+    uses: ./.github/workflows/camera-train-round.yml
+    with: { round: 5 }
