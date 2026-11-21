@@ -278,7 +278,7 @@
             <dt>Running</dt><dd>{duration(stats.running_secs)}, {stats.checks} checks</dd>
             <dt>Per check</dt><dd>{stats.check_ms.toFixed(0)} ms, {stats.rate} a second</dd>
             {#if stats.core_pct != null}<dt>CPU</dt><dd>{stats.core_pct.toFixed(1)}% of one core{#if stats.worker_pct != null && stats.app_pct != null}<small>models {stats.worker_pct.toFixed(1)}%, camera and app {stats.app_pct.toFixed(1)}%</small>{/if}</dd>{/if}
-            <dt>Minimised</dt><dd class:yes={minutesHidden >= 60}>{duration(stats.hidden_secs)} of 60 min, {stats.hidden_checks} checks</dd>
+            <dt>Minimised</dt><dd class:yes={minutesHidden >= 20}>{duration(stats.hidden_secs)}, {stats.hidden_checks} checks</dd>
             <dt>Longest gap</dt><dd class:warn={stats.longest_gap > 3}>{stats.longest_gap.toFixed(1)} s</dd>
           </dl>
         {/if}

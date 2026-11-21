@@ -15,7 +15,10 @@ This folder is phase 0: a test build that proves the risky parts on a real PC.
 - `sandbox/` starts the camera worker in a Windows AppContainer with no capabilities: no network, camera or
   personal files (CI proves both with `sandbox-check`)
 - `live/` the live camera check: hands frames to the sandboxed worker and turns its answers into here/away,
-  phone, interruption and camera-health states (the rules are in `live/src/rules.rs`, with tests)
+  phone, interruption and camera-health states (the rules are in `live/src/rules.rs`, with tests).
+  `live/src/clips.rs` records your own test clips (JPEG frames in the app's local data folder, never
+  uploaded) and scores each detector on them with the same rules; `cargo run -p lockin-live --example
+  score` runs it locally
 - `scripts/smoke.ps1` installs the Guard, blocks a site, closes Notepad and removes it again (runs in CI)
 
 GitHub Actions builds the installer on every push that touches this folder

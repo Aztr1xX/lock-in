@@ -26,7 +26,13 @@ enum Handle {
     Plain(Child),
 }
 
-type Started = (Handle, Box<dyn Write + Send>, Box<dyn Read + Send>, Box<dyn Read + Send>, SandboxState);
+type Started = (
+    Handle,
+    Box<dyn Write + Send>,
+    Box<dyn Read + Send>,
+    Box<dyn Read + Send>,
+    SandboxState,
+);
 
 /// A running worker. Dropping it ends the process.
 pub struct Process {
@@ -44,12 +50,28 @@ impl Process {
         let (handle, stdin, stdout, stderr, sandbox): Started =
             match lockin_sandbox::spawn(exe, args, dir) {
                 Ok(mut c) => {
-                    let (i, o, e) = (c.stdin.take().ok_or("no pipe")?, c.stdout.take().ok_or("no pipe")?, c.stderr.take().ok_or("no pipe")?);
-                    (Handle::Sandboxed(c), Box::new(i), Box::new(o), Box::new(e), SandboxState { on: true, error: None })
+                    let (i, o, e) = (
+                        c.stdin.take().ok_or("no pipe")?,
+                        c.stdout.take().ok_or("no pipe")?,
+                        c.stderr.take().ok_or("no pipe")?,
+                    );
+                    (
+                        Handle::Sandboxed(c),
+                        Box::new(i),
+                        Box::new(o),
+                        Box::new(e),
+                        SandboxState {
+                            on: true,
+                            error: None,
+                        },
+                    )
                 }
                 Err(why) => {
                     let mut cmd = Command::new(exe);
-                    cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+                    cmd.args(args)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped());
                     #[cfg(windows)]
                     {
                         use std::os::windows::process::CommandExt;
@@ -57,9 +79,24 @@ impl Process {
                         const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
                         cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
                     }
-                    let mut c = cmd.spawn().map_err(|e| format!("Couldn't start the camera worker: {e}"))?;
-                    let (i, o, e) = (c.stdin.take().ok_or("no pipe")?, c.stdout.take().ok_or("no pipe")?, c.stderr.take().ok_or("no pipe")?);
-                    (Handle::Plain(c), Box::new(i), Box::new(o), Box::new(e), SandboxState { on: false, error: Some(why) })
+                    let mut c = cmd
+                        .spawn()
+                        .map_err(|e| format!("Couldn't start the camera worker: {e}"))?;
+                    let (i, o, e) = (
+                        c.stdin.take().ok_or("no pipe")?,
+                        c.stdout.take().ok_or("no pipe")?,
+                        c.stderr.take().ok_or("no pipe")?,
+                    );
+                    (
+                        Handle::Plain(c),
+                        Box::new(i),
+                        Box::new(o),
+                        Box::new(e),
+                        SandboxState {
+                            on: false,
+                            error: Some(why),
+                        },
+                    )
                 }
             };
         let (tx, lines) = channel();
@@ -81,12 +118,23 @@ impl Process {
                 k.push(line);
             }
         });
-        Ok(Process { handle, stdin: Some(stdin), lines, stderr: err_lines, sandbox })
+        Ok(Process {
+            handle,
+            stdin: Some(stdin),
+            lines,
+            stderr: err_lines,
+            sandbox,
+        })
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let w = self.stdin.as_mut().ok_or("the camera worker's input is closed")?;
-        w.write_all(bytes).and_then(|_| w.flush()).map_err(|_| self.why_stopped())
+        let w = self
+            .stdin
+            .as_mut()
+            .ok_or("the camera worker's input is closed")?;
+        w.write_all(bytes)
+            .and_then(|_| w.flush())
+            .map_err(|_| self.why_stopped())
     }
 
     /// Closes the worker's input, which tells it there is nothing more.
@@ -103,7 +151,9 @@ impl Process {
                         return Ok(v);
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => return Err("The camera worker took too long to answer".into()),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err("The camera worker took too long to answer".into())
+                }
                 Err(RecvTimeoutError::Disconnected) => return Err(self.why_stopped()),
             }
         }
@@ -111,11 +161,21 @@ impl Process {
 
     /// Every remaining line until the worker exits.
     pub fn rest(&mut self) -> impl Iterator<Item = Value> + '_ {
-        self.lines.iter().filter_map(|l| serde_json::from_str(&l).ok())
+        self.lines
+            .iter()
+            .filter_map(|l| serde_json::from_str(&l).ok())
     }
 
     fn why_stopped(&self) -> String {
-        let tail: Vec<String> = self.stderr.lock().unwrap().iter().rev().take(3).cloned().collect();
+        let tail: Vec<String> = self
+            .stderr
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .take(3)
+            .cloned()
+            .collect();
         if tail.is_empty() {
             "The camera worker stopped".into()
         } else {
@@ -126,14 +186,28 @@ impl Process {
     /// Waits for the process to end; returns how it ended.
     pub fn wait(&mut self) -> String {
         match &mut self.handle {
-            Handle::Sandboxed(s) => s.wait().map(|c| format!("exit code {c}")).unwrap_or_else(|e| e),
-            Handle::Plain(c) => c.wait().map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()),
+            Handle::Sandboxed(s) => s
+                .wait()
+                .map(|c| format!("exit code {c}"))
+                .unwrap_or_else(|e| e),
+            Handle::Plain(c) => c
+                .wait()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|e| e.to_string()),
         }
     }
 
     /// The stderr lines kept so far (for error messages).
     pub fn stderr_tail(&self) -> String {
-        self.stderr.lock().unwrap().iter().rev().take(3).cloned().collect::<Vec<_>>().join(" / ")
+        self.stderr
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" / ")
     }
 
     /// CPU time the worker has used, in milliseconds (Windows only).
@@ -181,8 +255,15 @@ impl Live {
         // Loading the models takes a second or two; the graphics chip can take longer the first time.
         let ready = process.next(Duration::from_secs(90))?;
         match ready["type"].as_str() {
-            Some("ready") => Ok(Live { engine: ready["engine"].as_str().unwrap_or("cpu").to_string(), check: check.to_string(), process }),
-            Some("error") => Err(ready["message"].as_str().unwrap_or("the camera worker failed").to_string()),
+            Some("ready") => Ok(Live {
+                engine: ready["engine"].as_str().unwrap_or("cpu").to_string(),
+                check: check.to_string(),
+                process,
+            }),
+            Some("error") => Err(ready["message"]
+                .as_str()
+                .unwrap_or("the camera worker failed")
+                .to_string()),
             _ => Err(format!("unexpected answer from the camera worker: {ready}")),
         }
     }
@@ -205,7 +286,10 @@ impl Live {
         let v = self.process.next(timeout)?;
         match v["type"].as_str() {
             Some("frame") => Ok(v),
-            Some("frame_error") | Some("error") => Err(v["message"].as_str().unwrap_or("the models failed on a frame").to_string()),
+            Some("frame_error") | Some("error") => Err(v["message"]
+                .as_str()
+                .unwrap_or("the models failed on a frame")
+                .to_string()),
             _ => Err(format!("unexpected answer from the camera worker: {v}")),
         }
     }

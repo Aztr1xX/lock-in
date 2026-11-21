@@ -10,6 +10,7 @@
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
   import CameraBench from "./lib/CameraBench.svelte";
   import LiveCamera from "./lib/LiveCamera.svelte";
+  import TestClips from "./lib/TestClips.svelte";
 
   type Mark = "pass" | "fail" | "";
   const inTauri = "__TAURI_INTERNALS__" in window;
@@ -30,6 +31,7 @@
   let test: CamTest | null = null;
   let benchSummary = $state("");
   let liveSummary = $state("");
+  let clipsSummary = $state("");
 
   function savedCamera(): string {
     try {
@@ -225,11 +227,14 @@
     { id: "bench-sandbox", group: "Camera speed test", text: "It said it ran in its sandbox" },
     { id: "live-picker", group: "Live camera check", text: "The camera picker showed a moving picture of you, marked \"Sees you\"" },
     { id: "live-broadcast", group: "Live camera check", text: "NVIDIA Broadcast never showed its crossed-out camera" },
-    { id: "live-hour", group: "Live camera check", text: "Left minimised for an hour, \"Minimised\" reached 60 min with no long gap" },
+    { id: "live-hour", group: "Live camera check", text: "Left minimised while you studied for 20 min or more, with no long gap" },
     { id: "live-away", group: "Live camera check", text: "Walking away for 20 s showed Away, and sitting down showed Here again within a few seconds" },
     { id: "live-ipad", group: "Live camera check", text: "Reading your iPad for 5 minutes never showed Away or Phone" },
     { id: "live-phone", group: "Live camera check", text: "Holding your phone showed \"In your hand\" within about 5 s (this model isn't trained for it yet, so misses are expected)" },
     { id: "live-cover", group: "Live camera check", text: "Covering the camera said it looks covered, not Away" },
+    { id: "clips-record", group: "Test clips", text: "Recorded the phone, iPad and leaving clips (more if you can)" },
+    { id: "clips-preview", group: "Test clips", text: "The countdown and picture showed while recording" },
+    { id: "clips-score", group: "Test clips", text: "Scoring finished and showed which clips each detector got right" },
     { id: "cam-open", group: "Camera", text: "The camera opened with no permission prompt" },
     { id: "cam-run", group: "Camera", text: "Ran for a minute with \"person\" right most of the time" },
     { id: "cam-phone", group: "Camera", text: "Holding up your phone raises the phone score" },
@@ -269,6 +274,7 @@
     const lines = [`Lock In test build ${about.app}, WebView2 ${about.webview}`];
     if (benchSummary) lines.push(benchSummary);
     if (liveSummary) lines.push(liveSummary);
+    if (clipsSummary) lines.push(clipsSummary);
     if (stats)
       lines.push(
         `Camera: ${stats.frames} frames, ${stats.avgMs.toFixed(0)} ms avg, ${stats.maxMs.toFixed(0)} ms max, pose on ${stats.poseDelegate}${stats.error ? `, error ${stats.error}` : ""}`,
@@ -324,7 +330,7 @@
   <header>
     <p class="eyebrow">Test build {about.app}</p>
     <h1>The new camera engine</h1>
-    <p class="lede">Steps 1 and 2 of the camera plan. Run the speed test, then leave the live check running while you study. Tap the checks at the bottom and copy your results into the chat.</p>
+    <p class="lede">Steps 1 to 3 of the camera plan. Run the speed test, leave the live check running while you study, and record a few test clips when you have ten minutes. Tap the checks at the bottom and copy your results into the chat.</p>
   </header>
 
   <section>
@@ -352,6 +358,17 @@
   <section>
     <div class="head">
       <span class="num">3</span>
+      <div>
+        <h2>Your test clips</h2>
+        <p>Short clips of you studying the way you really do, so the detector can be checked and tuned on your desk, your light and your iPad. Each one tells you what to do. They stay on this PC, and you can delete them any time.</p>
+      </div>
+    </div>
+    <TestClips bind:text={clipsSummary} />
+  </section>
+
+  <section>
+    <div class="head">
+      <span class="num">4</span>
       <div>
         <h2>Today's camera check</h2>
         <p>The current models, running inside the app window, for comparison. Opens your camera and checks twice a second.</p>

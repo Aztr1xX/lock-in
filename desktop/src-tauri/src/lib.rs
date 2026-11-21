@@ -24,12 +24,15 @@ const GUARD_ADDR: &str = "127.0.0.1:47822";
 #[tauri::command]
 fn guard(req: Value) -> Result<Value, String> {
     let addr: SocketAddr = GUARD_ADDR.parse().unwrap();
-    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(800)).map_err(|_| "not running".to_string())?;
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(800))
+        .map_err(|_| "not running".to_string())?;
     // Study YouTube searches load several pages, so allow them time.
     s.set_read_timeout(Some(Duration::from_secs(30))).ok();
     writeln!(s, "{req}").map_err(|e| e.to_string())?;
     let mut line = String::new();
-    BufReader::new(s).read_line(&mut line).map_err(|e| e.to_string())?;
+    BufReader::new(s)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
     serde_json::from_str(&line).map_err(|e| format!("bad reply: {e}"))
 }
 
@@ -40,9 +43,16 @@ async fn guard_setup(action: String) -> Result<String, String> {
         return Err("unknown action".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let guard = exe.with_file_name(if cfg!(windows) { "lockin-guard.exe" } else { "lockin-guard" });
+    let guard = exe.with_file_name(if cfg!(windows) {
+        "lockin-guard.exe"
+    } else {
+        "lockin-guard"
+    });
     if !guard.exists() {
-        return Err(format!("Guard not found next to the app ({})", guard.display()));
+        return Err(format!(
+            "Guard not found next to the app ({})",
+            guard.display()
+        ));
     }
     tauri::async_runtime::spawn_blocking(move || elevated::run(&guard, &action))
         .await
@@ -56,7 +66,10 @@ static BENCH_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// is handed to the worker through a pipe, so it never touches the disk. Progress is sent to the
 /// window as "camera-bench" events; the result comes back as the reply.
 #[tauri::command]
-async fn camera_bench(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+async fn camera_bench(
+    app: tauri::AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
     use std::sync::atomic::Ordering;
     let frame = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
@@ -67,9 +80,11 @@ async fn camera_bench(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -
     if BENCH_RUNNING.swap(true, Ordering::SeqCst) {
         return Err("A speed test is already running.".into());
     }
-    let result = tauri::async_runtime::spawn_blocking(move || camera_worker::bench(&app, &worker, &models, frame))
-        .await
-        .map_err(|e| e.to_string());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        camera_worker::bench(&app, &worker, &models, frame)
+    })
+    .await
+    .map_err(|e| e.to_string());
     BENCH_RUNNING.store(false, Ordering::SeqCst);
     result?
 }
@@ -81,7 +96,12 @@ mod camera_worker {
     use std::time::Duration;
     use tauri::Emitter;
 
-    pub fn bench(app: &tauri::AppHandle, worker: &Path, models: &Path, frame: Vec<u8>) -> Result<Value, String> {
+    pub fn bench(
+        app: &tauri::AppHandle,
+        worker: &Path,
+        models: &Path,
+        frame: Vec<u8>,
+    ) -> Result<Value, String> {
         let models_arg = models.to_string_lossy().to_string();
         let mut p = Process::start(worker, &["bench", "--models", &models_arg])?;
         let sandbox = json!(p.sandbox);
@@ -106,12 +126,24 @@ mod camera_worker {
             (None, Some(e)) => Err(e),
             (None, None) => {
                 let tail = p.stderr_tail();
-                Err(format!("The camera worker stopped ({status}){}", if tail.is_empty() { String::new() } else { format!(": {tail}") }))
+                Err(format!(
+                    "The camera worker stopped ({status}){}",
+                    if tail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {tail}")
+                    }
+                ))
             }
         }
     }
 
-    fn handle(app: &tauri::AppHandle, v: Value, result: &mut Option<Value>, error: &mut Option<String>) {
+    fn handle(
+        app: &tauri::AppHandle,
+        v: Value,
+        result: &mut Option<Value>,
+        error: &mut Option<String>,
+    ) {
         match v["type"].as_str() {
             Some("progress") => {
                 let _ = app.emit("camera-bench", &v);
@@ -146,10 +178,21 @@ mod live {
 
     pub fn paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let worker = exe.with_file_name(if cfg!(windows) { "lockin-camera.exe" } else { "lockin-camera" });
-        let models = app.path().resource_dir().map_err(|e| e.to_string())?.join("models");
+        let worker = exe.with_file_name(if cfg!(windows) {
+            "lockin-camera.exe"
+        } else {
+            "lockin-camera"
+        });
+        let models = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("models");
         if !worker.exists() || !models.join("manifest.json").exists() {
-            return Err("The camera models aren't installed. Reinstall Lock In from the latest release.".into());
+            return Err(
+                "The camera models aren't installed. Reinstall Lock In from the latest release."
+                    .into(),
+            );
         }
         Ok((worker, models))
     }
@@ -168,9 +211,30 @@ mod live {
     #[tauri::command]
     pub fn camera_checks(app: tauri::AppHandle) -> Result<Value, String> {
         let (_, models) = paths(&app)?;
-        let m: Value = serde_json::from_slice(&std::fs::read(models.join("manifest.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let have = |id: &str| m["models"].as_array().into_iter().flatten().find(|x| x["id"] == id).and_then(|x| x["file"].as_str()).is_some_and(|f| models.join(f).exists());
-        let ok: Vec<&str> = m["checks"].as_array().into_iter().flatten().filter(|c| ["frame", "hands", "pose"].iter().all(|k| c[k].as_str().is_some_and(|id| have(id)))).filter_map(|c| c["name"].as_str()).collect();
+        let m: Value = serde_json::from_slice(
+            &std::fs::read(models.join("manifest.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let have = |id: &str| {
+            m["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|x| x["id"] == id)
+                .and_then(|x| x["file"].as_str())
+                .is_some_and(|f| models.join(f).exists())
+        };
+        let ok: Vec<&str> = m["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| {
+                ["frame", "hands", "pose"]
+                    .iter()
+                    .all(|k| c[k].as_str().is_some_and(|id| have(id)))
+            })
+            .filter_map(|c| c["name"].as_str())
+            .collect();
         Ok(json!(ok))
     }
 
@@ -198,11 +262,20 @@ mod live {
                 models,
                 check: opts.check,
                 gpu: opts.gpu,
-                settings: Settings { phone: opts.phone, ..Settings::default() },
+                settings: Settings {
+                    phone: opts.phone,
+                    ..Settings::default()
+                },
             };
             let emitter = app.clone();
             let hidden = || HIDDEN.load(Ordering::Relaxed);
-            *slot = Some(Session::start(o, move |u| { let _ = emitter.emit("camera-live", &u); }, hidden));
+            *slot = Some(Session::start(
+                o,
+                move |u| {
+                    let _ = emitter.emit("camera-live", &u);
+                },
+                hidden,
+            ));
         })
         .await
         .map_err(|e| e.to_string())
@@ -229,13 +302,21 @@ mod live {
 
     #[tauri::command]
     pub async fn camera_live_running() -> Result<bool, String> {
-        Ok(SESSION.lock().unwrap().as_ref().is_some_and(Session::is_running))
+        Ok(SESSION
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(Session::is_running))
     }
 
     /// Starts the picker's live tiles for these cameras (ids from camera_list). Stops a running
     /// live check first, since both would want the camera.
     #[tauri::command]
-    pub async fn camera_peek_start(app: tauri::AppHandle, ids: Vec<String>, check: Option<String>) -> Result<(), String> {
+    pub async fn camera_peek_start(
+        app: tauri::AppHandle,
+        ids: Vec<String>,
+        check: Option<String>,
+    ) -> Result<(), String> {
         let all = lockin_capture::list().map_err(|e| e.to_string())?;
         let cams: Vec<CameraInfo> = all.into_iter().filter(|c| ids.contains(&c.id)).collect();
         let worker = match (paths(&app), check) {
@@ -247,7 +328,9 @@ mod live {
             let mut slot = PEEK.lock().unwrap();
             slot.take();
             let emitter = app.clone();
-            *slot = Some(Peek::start(cams, worker, move |t| { let _ = emitter.emit("camera-peek", &t); }));
+            *slot = Some(Peek::start(cams, worker, move |t| {
+                let _ = emitter.emit("camera-peek", &t);
+            }));
         })
         .await
         .map_err(|e| e.to_string())
@@ -262,8 +345,172 @@ mod live {
         .map_err(|e| e.to_string())
     }
 
+    /// Stops the live check and the picker, so something else can open the camera.
+    pub fn release_camera() {
+        PEEK.lock().unwrap().take();
+        SESSION.lock().unwrap().take();
+    }
+
     pub fn window_changed(w: &tauri::Window) {
-        HIDDEN.store(w.is_minimized().unwrap_or(false) || !w.is_visible().unwrap_or(true), Ordering::Relaxed);
+        HIDDEN.store(
+            w.is_minimized().unwrap_or(false) || !w.is_visible().unwrap_or(true),
+            Ordering::Relaxed,
+        );
+    }
+}
+
+/// Your own test clips (camera plan, step 3). Recorded by this process into the app's own data
+/// folder on this PC, and played back through the sandboxed worker to score each detector. The
+/// worker is only ever handed frames, never files, and nothing is uploaded.
+mod clips {
+    use lockin_capture::Stream;
+    use lockin_live::clips::{self, SPECS};
+    use lockin_live::rules::Settings;
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    use tauri::{Emitter, Manager};
+
+    static STOP: AtomicBool = AtomicBool::new(false);
+    static BUSY: AtomicBool = AtomicBool::new(false);
+
+    fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+        Ok(app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("test-clips"))
+    }
+
+    /// Clears BUSY however the job ends.
+    struct Busy;
+    impl Busy {
+        fn take() -> Result<Busy, String> {
+            if BUSY.swap(true, Ordering::SeqCst) {
+                return Err("Already recording or scoring.".into());
+            }
+            STOP.store(false, Ordering::SeqCst);
+            Ok(Busy)
+        }
+    }
+    impl Drop for Busy {
+        fn drop(&mut self) {
+            BUSY.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// Every clip with its instructions, and the recording if there is one.
+    #[tauri::command]
+    pub fn clips_list(app: tauri::AppHandle) -> Result<Value, String> {
+        let dir = root(&app)?;
+        let have = clips::list(&dir);
+        Ok(json!({
+            "folder": dir.to_string_lossy(),
+            "clips": SPECS.iter().map(|s| json!({ "spec": s, "recorded": have.iter().find(|m| m.id == s.id) })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Records one clip from this camera. Stops the live check and the picker first, since they'd
+    /// want the camera too. Sends "clip-progress" with a small preview after every frame.
+    #[tauri::command]
+    pub async fn clip_record(
+        app: tauri::AppHandle,
+        id: String,
+        camera_id: String,
+        camera_name: String,
+    ) -> Result<Value, String> {
+        let spec = clips::spec(&id).ok_or("no such clip")?;
+        let dir = root(&app)?;
+        let busy = Busy::take()?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let _busy = busy;
+            super::live::release_camera();
+            let stream = Stream::open(&camera_id, 640, 480).map_err(|e| e.to_string())?;
+            // A three-second countdown with the picture showing, so you can get in place. Not saved.
+            let total = spec.secs as usize * 2;
+            for i in 0..6 {
+                if STOP.load(Ordering::SeqCst) {
+                    return Err("Stopped".to_string());
+                }
+                let t = std::time::Instant::now();
+                let f = stream.frame(Duration::from_secs(3)).map_err(|e| e.to_string())?;
+                let _ = app.emit("clip-progress", json!({ "id": spec.id, "done": 0, "total": total, "count": 3 - i / 2, "preview": lockin_live::session::jpeg(&f) }));
+                std::thread::sleep(Duration::from_millis(500).saturating_sub(t.elapsed()));
+            }
+            let last = std::cell::RefCell::new(None);
+            let meta = clips::record(
+                &dir,
+                spec,
+                &camera_name,
+                || {
+                    let f = stream.frame(Duration::from_secs(3)).map_err(|e| e.to_string())?;
+                    *last.borrow_mut() = lockin_live::session::jpeg(&f);
+                    Ok(f)
+                },
+                |done, total| {
+                    let _ = app.emit("clip-progress", json!({ "id": spec.id, "done": done, "total": total, "count": 0, "preview": last.borrow_mut().take() }));
+                },
+                &|| STOP.load(Ordering::SeqCst),
+            )?;
+            Ok(json!(meta))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    /// Stops a recording (nothing is kept) or a scoring run.
+    #[tauri::command]
+    pub fn clips_stop() {
+        STOP.store(true, Ordering::SeqCst);
+    }
+
+    /// Deletes one clip, or all of them when `id` is missing.
+    #[tauri::command]
+    pub fn clips_delete(app: tauri::AppHandle, id: Option<String>) -> Result<(), String> {
+        if BUSY.load(Ordering::SeqCst) {
+            return Err("Wait for the recording or scoring to finish.".into());
+        }
+        clips::delete(&root(&app)?, id.as_deref())
+    }
+
+    /// Plays every recorded clip through each detector and returns how each did. Sends
+    /// "clip-score-progress" after each clip.
+    #[tauri::command]
+    pub async fn clips_score(
+        app: tauri::AppHandle,
+        checks: Vec<String>,
+        gpu: bool,
+        phone: bool,
+    ) -> Result<Value, String> {
+        let (worker, models) = super::live::paths(&app)?;
+        let dir = root(&app)?;
+        let busy = Busy::take()?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let _busy = busy;
+            let settings = Settings {
+                phone,
+                ..Settings::default()
+            };
+            let out = clips::score(
+                &dir,
+                &worker,
+                &models,
+                &checks,
+                gpu,
+                settings,
+                |check, clip, done, total| {
+                    let _ = app.emit(
+                        "clip-score-progress",
+                        json!({ "check": check, "clip": clip, "done": done, "total": total }),
+                    );
+                    !STOP.load(Ordering::SeqCst)
+                },
+            )?;
+            Ok(json!(out))
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 }
 
@@ -304,7 +551,8 @@ mod elevated {
             ..Default::default()
         };
         unsafe {
-            ShellExecuteExW(&mut info).map_err(|_| "The admin prompt was cancelled.".to_string())?;
+            ShellExecuteExW(&mut info)
+                .map_err(|_| "The admin prompt was cancelled.".to_string())?;
             if info.hProcess.is_invalid() {
                 return Err("Could not start the Guard installer.".into());
             }
@@ -318,7 +566,9 @@ mod elevated {
             if code == 0 {
                 Ok(format!("{arg} done"))
             } else {
-                Err(format!("{arg} failed (code {code}). Details are in C:\\ProgramData\\LockIn\\guard.log"))
+                Err(format!(
+                    "{arg} failed (code {code}). Details are in C:\\ProgramData\\LockIn\\guard.log"
+                ))
             }
         }
     }
@@ -380,7 +630,12 @@ pub fn run() {
             live::camera_live_preview,
             live::camera_live_running,
             live::camera_peek_start,
-            live::camera_peek_stop
+            live::camera_peek_stop,
+            clips::clips_list,
+            clips::clip_record,
+            clips::clips_stop,
+            clips::clips_delete,
+            clips::clips_score
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Open Lock In", true, None::<&str>)?;
@@ -397,7 +652,12 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, ev| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = ev
+                    {
                         show_main(tray.app_handle());
                     }
                 });
@@ -414,7 +674,9 @@ pub fn run() {
                 let _ = window.hide();
                 live::HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            WindowEvent::Resized(_) | WindowEvent::Focused(_) | WindowEvent::Moved(_) => live::window_changed(window),
+            WindowEvent::Resized(_) | WindowEvent::Focused(_) | WindowEvent::Moved(_) => {
+                live::window_changed(window)
+            }
             _ => {}
         })
         .run(tauri::generate_context!())

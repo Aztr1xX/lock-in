@@ -56,7 +56,14 @@ pub struct Stats {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Update {
-    Started { camera: String, engine: String, check: String, sandbox: SandboxState, width: u32, height: u32 },
+    Started {
+        camera: String,
+        engine: String,
+        check: String,
+        sandbox: SandboxState,
+        width: u32,
+        height: u32,
+    },
     Check {
         state: State,
         stats: Stats,
@@ -67,10 +74,17 @@ pub enum Update {
         preview: Option<String>,
         brightness: f32,
     },
-    Events { events: Vec<Event> },
+    Events {
+        events: Vec<Event>,
+    },
     /// Something went wrong. `fatal` means the session has stopped.
-    Problem { message: String, fatal: bool },
-    Stopped { stats: Stats },
+    Problem {
+        message: String,
+        fatal: bool,
+    },
+    Stopped {
+        stats: Stats,
+    },
 }
 
 pub struct Session {
@@ -82,7 +96,11 @@ pub struct Session {
 impl Session {
     /// Starts the session on its own thread. `hidden` says whether the app window is
     /// minimised or hidden right now.
-    pub fn start(opts: Options, mut on_update: impl FnMut(Update) + Send + 'static, hidden: impl Fn() -> bool + Send + 'static) -> Session {
+    pub fn start(
+        opts: Options,
+        mut on_update: impl FnMut(Update) + Send + 'static,
+        hidden: impl Fn() -> bool + Send + 'static,
+    ) -> Session {
         let stop = Arc::new(AtomicBool::new(false));
         let preview = Arc::new(AtomicBool::new(false));
         let (s, p) = (stop.clone(), preview.clone());
@@ -93,7 +111,11 @@ impl Session {
                 on_update(Update::Stopped { stats });
             })
             .ok();
-        Session { stop, preview, thread }
+        Session {
+            stop,
+            preview,
+            thread,
+        }
     }
 
     /// Turns the live preview pictures on or off (off when nobody is looking, to save work).
@@ -121,19 +143,34 @@ const LOOK_TIMEOUT: Duration = Duration::from_secs(10);
 const SLOW_MS: f64 = 150.0;
 const MAX_RESTARTS: u32 = 3;
 
-fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn FnMut(Update), hidden: &dyn Fn() -> bool) -> Stats {
-    let mut stats = Stats { rate: 2.0, ..Stats::default() };
+fn run(
+    opts: &Options,
+    stop: &AtomicBool,
+    preview: &AtomicBool,
+    emit: &mut dyn FnMut(Update),
+    hidden: &dyn Fn() -> bool,
+) -> Stats {
+    let mut stats = Stats {
+        rate: 2.0,
+        ..Stats::default()
+    };
     let stream = match Stream::open(&opts.camera_id, 640, 480) {
         Ok(s) => s,
         Err(e) => {
-            emit(Update::Problem { message: e.to_string(), fatal: true });
+            emit(Update::Problem {
+                message: e.to_string(),
+                fatal: true,
+            });
             return stats;
         }
     };
     let mut worker = match Live::start(&opts.worker, &opts.models, &opts.check, opts.gpu) {
         Ok(w) => w,
         Err(e) => {
-            emit(Update::Problem { message: e, fatal: true });
+            emit(Update::Problem {
+                message: e,
+                fatal: true,
+            });
             return stats;
         }
     };
@@ -182,7 +219,10 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
                 continue;
             }
             Err(e) => {
-                emit(Update::Problem { message: e.to_string(), fatal: true });
+                emit(Update::Problem {
+                    message: e.to_string(),
+                    fatal: true,
+                });
                 return finish(stats, start);
             }
         };
@@ -195,16 +235,27 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
             Err(e) => {
                 stats.failed_checks += 1;
                 if stats.worker_restarts >= MAX_RESTARTS {
-                    emit(Update::Problem { message: format!("{e}. Stopped the camera check after {MAX_RESTARTS} restarts."), fatal: true });
+                    emit(Update::Problem {
+                        message: format!(
+                            "{e}. Stopped the camera check after {MAX_RESTARTS} restarts."
+                        ),
+                        fatal: true,
+                    });
                     return finish(stats, start);
                 }
-                emit(Update::Problem { message: format!("{e}. Restarting it."), fatal: false });
+                emit(Update::Problem {
+                    message: format!("{e}. Restarting it."),
+                    fatal: false,
+                });
                 stats.worker_restarts += 1;
                 drop(worker);
                 worker = match Live::start(&opts.worker, &opts.models, &opts.check, opts.gpu) {
                     Ok(w) => w,
                     Err(e) => {
-                        emit(Update::Problem { message: e, fatal: true });
+                        emit(Update::Problem {
+                            message: e,
+                            fatal: true,
+                        });
                         return finish(stats, start);
                     }
                 };
@@ -235,7 +286,11 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
             recent_ms.remove(0);
         }
         stats.check_ms = median(&recent_ms);
-        stats.rate = if recent_ms.len() >= 6 && stats.check_ms > SLOW_MS { 1.0 } else { 2.0 };
+        stats.rate = if recent_ms.len() >= 6 && stats.check_ms > SLOW_MS {
+            1.0
+        } else {
+            2.0
+        };
         stats.camera_frames = stream.frames_seen();
         if cpu_mark.0.elapsed() >= Duration::from_secs(10) {
             let now = cpu_split(&worker);
@@ -248,8 +303,17 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
         }
         stats.running_secs = start.elapsed().as_secs_f64();
 
-        let picture = preview.load(Ordering::SeqCst).then(|| jpeg(&frame)).flatten();
-        emit(Update::Check { state: rules.state(), stats: stats.clone(), seen: trim(seen), preview: picture, brightness });
+        let picture = preview
+            .load(Ordering::SeqCst)
+            .then(|| jpeg(&frame))
+            .flatten();
+        emit(Update::Check {
+            state: rules.state(),
+            stats: stats.clone(),
+            seen: trim(seen),
+            preview: picture,
+            brightness,
+        });
         prev = Some(frame);
     }
     finish(stats, start)
@@ -279,7 +343,12 @@ fn median(v: &[f64]) -> f64 {
 pub fn to_look(t: f64, v: &Value, brightness: f32, change: f32) -> Look {
     let num = |x: &Value| x.as_f64().map(|f| f as f32);
     let kp = v["keypoints"].as_array();
-    let point_ok = |i: usize| kp.and_then(|k| k.get(i)).and_then(|p| p.get(2)).and_then(Value::as_f64).is_some_and(|s| s >= 0.3);
+    let point_ok = |i: usize| {
+        kp.and_then(|k| k.get(i))
+            .and_then(|p| p.get(2))
+            .and_then(Value::as_f64)
+            .is_some_and(|s| s >= 0.3)
+    };
     let phone = v.get("phone").filter(|p| !p.is_null()).map(|p| PhoneSeen {
         score: num(&p["score"]).unwrap_or(0.0),
         near_wrist: p["near_wrist"].as_bool().unwrap_or(false),
@@ -313,7 +382,9 @@ pub fn jpeg(f: &Frame) -> Option<String> {
     let h = (f.height as f64 * w as f64 / f.width as f64).round() as u32;
     let small = image::imageops::resize(&img, w, h.max(1), image::imageops::FilterType::Triangle);
     let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 70).encode_image(&small).ok()?;
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 70)
+        .encode_image(&small)
+        .ok()?;
     Some(base64::engine::general_purpose::STANDARD.encode(out))
 }
 
@@ -337,13 +408,22 @@ mod tests {
         let p = l.phone.unwrap();
         assert!(p.near_wrist && (p.score - 0.8).abs() < 1e-6 && p.long_side_shoulders == Some(0.5));
         assert!(!l.drink_at_hand);
-        let none = to_look(0.0, &json!({ "people": 0, "person": null, "phone": null }), 0.0, 0.0);
+        let none = to_look(
+            0.0,
+            &json!({ "people": 0, "person": null, "phone": null }),
+            0.0,
+            0.0,
+        );
         assert!(!none.person && none.phone.is_none());
     }
 
     #[test]
     fn preview_is_a_small_jpeg() {
-        let f = Frame { width: 640, height: 480, rgb: vec![128; 640 * 480 * 3] };
+        let f = Frame {
+            width: 640,
+            height: 480,
+            rgb: vec![128; 640 * 480 * 3],
+        };
         let b = jpeg(&f).unwrap();
         assert!(b.len() < 20_000, "{}", b.len());
     }

@@ -5,7 +5,8 @@
 //! worker's answers into here, away, phone and camera-health states with the rules below.
 //! Frames are only ever in memory.
 
-pub mod rules;
-pub mod worker;
-pub mod session;
+pub mod clips;
 pub mod peek;
+pub mod rules;
+pub mod session;
+pub mod worker;

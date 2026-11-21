@@ -50,7 +50,10 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { phone: true, phone_score: 0.4 }
+        Settings {
+            phone: true,
+            phone_score: 0.4,
+        }
     }
 }
 
@@ -197,7 +200,11 @@ impl Rules {
         } else {
             if self.presence == Presence::Unknown {
                 // The camera is back. If you were away before, you still are until seen.
-                self.presence = if self.away_since.is_some() { Presence::Away } else { Presence::Here };
+                self.presence = if self.away_since.is_some() {
+                    Presence::Away
+                } else {
+                    Presence::Here
+                };
                 self.last_seen = t;
             }
             match self.presence {
@@ -219,7 +226,10 @@ impl Rules {
                             self.presence = Presence::Here;
                             self.last_seen = t;
                             self.seen_since = None;
-                            ev.push(Event::Back { at: since, away_secs: since - away });
+                            ev.push(Event::Back {
+                                at: since,
+                                away_secs: since - away,
+                            });
                         }
                     } else {
                         self.seen_since = None;
@@ -231,7 +241,11 @@ impl Rules {
         // ---- phone in hand ----
         let hit = self.settings.phone
             && self.health == Health::Ok
-            && l.phone.is_some_and(|p| p.score >= self.settings.phone_score && p.near_wrist && p.long_side_shoulders.is_none_or(|r| r <= TABLET_SHOULDERS));
+            && l.phone.is_some_and(|p| {
+                p.score >= self.settings.phone_score
+                    && p.near_wrist
+                    && p.long_side_shoulders.is_none_or(|r| r <= TABLET_SHOULDERS)
+            });
         if self.phone_window.len() == PHONE_WINDOW {
             self.phone_window.pop_front();
         }
@@ -243,7 +257,9 @@ impl Rules {
         match self.phone_since {
             None if hits >= PHONE_ON => {
                 // It started at the first sighting in the window.
-                let back = self.phone_window.len() - 1 - self.phone_window.iter().position(|&h| h).unwrap_or(0);
+                let back = self.phone_window.len()
+                    - 1
+                    - self.phone_window.iter().position(|&h| h).unwrap_or(0);
                 let at = (t - back as f64 * self.gap).max(0.0);
                 self.phone_since = Some(at);
                 ev.push(Event::PhoneStart { at });
@@ -252,7 +268,10 @@ impl Rules {
                 // It ended just after the last sighting.
                 let at = (self.phone_last_hit + self.gap).min(t);
                 self.phone_since = None;
-                ev.push(Event::PhoneEnd { at, secs: at - since });
+                ev.push(Event::PhoneEnd {
+                    at,
+                    secs: at - since,
+                });
             }
             _ => {}
         }
@@ -272,7 +291,10 @@ impl Rules {
                 if t - alone >= INTERRUPT_END {
                     self.interrupted_since = None;
                     self.alone_since = None;
-                    ev.push(Event::InterruptEnd { at: alone, secs: alone - start });
+                    ev.push(Event::InterruptEnd {
+                        at: alone,
+                        secs: alone - start,
+                    });
                 }
             }
         }
@@ -289,15 +311,25 @@ impl Rules {
 
     fn health(&mut self, l: &Look, ev: &mut Vec<Event>) {
         let t = l.t;
-        let covered = if l.brightness < COVERED_BRIGHTNESS { t - *self.dark_since.get_or_insert(t) >= COVERED_AFTER } else {
+        let covered = if l.brightness < COVERED_BRIGHTNESS {
+            t - *self.dark_since.get_or_insert(t) >= COVERED_AFTER
+        } else {
             self.dark_since = None;
             false
         };
-        let frozen = if l.change < FROZEN_CHANGE { t - *self.still_since.get_or_insert(t) >= FROZEN_AFTER } else {
+        let frozen = if l.change < FROZEN_CHANGE {
+            t - *self.still_since.get_or_insert(t) >= FROZEN_AFTER
+        } else {
             self.still_since = None;
             false
         };
-        let health = if frozen { Health::Frozen } else if covered { Health::Covered } else { Health::Ok };
+        let health = if frozen {
+            Health::Frozen
+        } else if covered {
+            Health::Covered
+        } else {
+            Health::Ok
+        };
         if health != self.health {
             self.health = health;
             ev.push(Event::Health { at: t, health });
@@ -320,7 +352,10 @@ impl Rules {
         if self.health != Health::Frozen {
             self.health = Health::Frozen;
             self.presence = Presence::Unknown;
-            ev.push(Event::Health { at: t, health: Health::Frozen });
+            ev.push(Event::Health {
+                at: t,
+                health: Health::Frozen,
+            });
         }
         // Make sure the next real frame doesn't count as "still frozen" from long ago.
         self.still_since = None;
@@ -333,10 +368,23 @@ mod tests {
     use super::*;
 
     fn here(t: f64) -> Look {
-        Look { t, people: 1, person: true, shoulders: true, brightness: 120.0, change: 3.0, ..Default::default() }
+        Look {
+            t,
+            people: 1,
+            person: true,
+            shoulders: true,
+            brightness: 120.0,
+            change: 3.0,
+            ..Default::default()
+        }
     }
     fn empty(t: f64) -> Look {
-        Look { t, brightness: 120.0, change: 3.0, ..Default::default() }
+        Look {
+            t,
+            brightness: 120.0,
+            change: 3.0,
+            ..Default::default()
+        }
     }
     /// Runs checks twice a second from `from` to `to` (exclusive), collecting events.
     fn run(r: &mut Rules, from: f64, to: f64, f: impl Fn(f64) -> Look) -> Vec<Event> {
@@ -362,7 +410,13 @@ mod tests {
         assert!(run(&mut r, 30.5, 31.0, empty).is_empty());
         // Two seconds of steady sightings do, dated from when you sat down.
         let ev = run(&mut r, 31.0, 34.0, here);
-        assert_eq!(ev, vec![Event::Back { at: 31.0, away_secs: 21.5 }]);
+        assert_eq!(
+            ev,
+            vec![Event::Back {
+                at: 31.0,
+                away_secs: 21.5
+            }]
+        );
         assert_eq!(r.state().presence, Presence::Here);
     }
 
@@ -374,14 +428,27 @@ mod tests {
         ev.extend(run(&mut r, 5.0, 17.0, empty));
         ev.extend(run(&mut r, 17.0, 20.0, here));
         // Face away, only shoulders seen (reading the iPad): still here.
-        ev.extend(run(&mut r, 20.0, 60.0, |t| Look { person: false, shoulders: true, ..here(t) }));
+        ev.extend(run(&mut r, 20.0, 60.0, |t| Look {
+            person: false,
+            shoulders: true,
+            ..here(t)
+        }));
         assert!(ev.is_empty(), "{ev:?}");
     }
 
     #[test]
     fn phone_needs_6_of_8_near_a_wrist() {
         let mut r = Rules::new(Settings::default());
-        let phone = |near: bool, size: Option<f32>| move |t: f64| Look { phone: Some(PhoneSeen { score: 0.7, near_wrist: near, long_side_shoulders: size }), ..here(t) };
+        let phone = |near: bool, size: Option<f32>| {
+            move |t: f64| Look {
+                phone: Some(PhoneSeen {
+                    score: 0.7,
+                    near_wrist: near,
+                    long_side_shoulders: size,
+                }),
+                ..here(t)
+            }
+        };
         // On the desk, away from the hands: never.
         assert!(run(&mut r, 0.0, 10.0, phone(false, Some(0.5))).is_empty());
         // Tablet-sized: never (the iPad).
@@ -392,7 +459,13 @@ mod tests {
         assert!(r.state().phone);
         // Put down: ends once only 2 of the last 8 checks saw it.
         let ev = run(&mut r, 33.0, 37.0, here);
-        assert_eq!(ev, vec![Event::PhoneEnd { at: 33.0, secs: 3.0 }]);
+        assert_eq!(
+            ev,
+            vec![Event::PhoneEnd {
+                at: 33.0,
+                secs: 3.0
+            }]
+        );
     }
 
     #[test]
@@ -400,11 +473,28 @@ mod tests {
         let mut r = Rules::new(Settings::default());
         let ev = run(&mut r, 0.0, 30.0, |t| {
             let blink = (t * 2.0) as i64 % 2 == 0; // every other check
-            Look { phone: blink.then_some(PhoneSeen { score: 0.9, near_wrist: true, long_side_shoulders: None }), ..here(t) }
+            Look {
+                phone: blink.then_some(PhoneSeen {
+                    score: 0.9,
+                    near_wrist: true,
+                    long_side_shoulders: None,
+                }),
+                ..here(t)
+            }
         });
         assert!(ev.is_empty(), "4 of 8 is not enough: {ev:?}");
-        let mut off = Rules::new(Settings { phone: false, ..Settings::default() });
-        let ev = run(&mut off, 0.0, 10.0, |t| Look { phone: Some(PhoneSeen { score: 0.9, near_wrist: true, long_side_shoulders: None }), ..here(t) });
+        let mut off = Rules::new(Settings {
+            phone: false,
+            ..Settings::default()
+        });
+        let ev = run(&mut off, 0.0, 10.0, |t| Look {
+            phone: Some(PhoneSeen {
+                score: 0.9,
+                near_wrist: true,
+                long_side_shoulders: None,
+            }),
+            ..here(t)
+        });
         assert!(ev.is_empty());
         assert_eq!(off.state().phone_hits, 0);
     }
@@ -412,38 +502,81 @@ mod tests {
     #[test]
     fn someone_else_for_20_seconds_is_an_interruption() {
         let mut r = Rules::new(Settings::default());
-        let two = |t: f64| Look { people: 2, ..here(t) };
+        let two = |t: f64| Look {
+            people: 2,
+            ..here(t)
+        };
         assert!(run(&mut r, 0.0, 15.0, two).is_empty());
-        assert!(run(&mut r, 15.0, 20.0, here).is_empty(), "a parent popping in for 15 s");
+        assert!(
+            run(&mut r, 15.0, 20.0, here).is_empty(),
+            "a parent popping in for 15 s"
+        );
         let ev = run(&mut r, 20.0, 45.0, two);
         assert_eq!(ev, vec![Event::InterruptStart { at: 20.0 }]);
         let ev = run(&mut r, 45.0, 52.0, here);
-        assert_eq!(ev, vec![Event::InterruptEnd { at: 45.0, secs: 25.0 }]);
+        assert_eq!(
+            ev,
+            vec![Event::InterruptEnd {
+                at: 45.0,
+                secs: 25.0
+            }]
+        );
     }
 
     #[test]
     fn covered_or_frozen_camera_is_not_away() {
         let mut r = Rules::new(Settings::default());
         run(&mut r, 0.0, 5.0, here);
-        let ev = run(&mut r, 5.0, 40.0, |t| Look { brightness: 2.0, ..empty(t) });
-        assert_eq!(ev, vec![Event::Health { at: 8.0, health: Health::Covered }]);
+        let ev = run(&mut r, 5.0, 40.0, |t| Look {
+            brightness: 2.0,
+            ..empty(t)
+        });
+        assert_eq!(
+            ev,
+            vec![Event::Health {
+                at: 8.0,
+                health: Health::Covered
+            }]
+        );
         assert_eq!(r.state().presence, Presence::Unknown);
         let ev = run(&mut r, 40.0, 42.0, here);
-        assert_eq!(ev, vec![Event::Health { at: 40.0, health: Health::Ok }]);
+        assert_eq!(
+            ev,
+            vec![Event::Health {
+                at: 40.0,
+                health: Health::Ok
+            }]
+        );
         assert_eq!(r.state().presence, Presence::Here);
 
         // The same picture over and over for 10 s: frozen, still not away.
-        let ev = run(&mut r, 42.0, 70.0, |t| Look { change: 0.0, ..empty(t) });
-        assert_eq!(ev, vec![Event::Health { at: 52.0, health: Health::Frozen }]);
+        let ev = run(&mut r, 42.0, 70.0, |t| Look {
+            change: 0.0,
+            ..empty(t)
+        });
+        assert_eq!(
+            ev,
+            vec![Event::Health {
+                at: 52.0,
+                health: Health::Frozen
+            }]
+        );
         // Sitting very still with a live camera has sensor noise, so it never reads as frozen.
         let mut r = Rules::new(Settings::default());
-        assert!(run(&mut r, 0.0, 120.0, |t| Look { change: 0.4, ..here(t) }).is_empty());
+        assert!(run(&mut r, 0.0, 120.0, |t| Look {
+            change: 0.4,
+            ..here(t)
+        })
+        .is_empty());
     }
 
     #[test]
     fn dark_room_tip_once_after_10_minutes() {
         let mut r = Rules::new(Settings::default());
-        let dim = |t: f64| Look { brightness: 30.0, ..here(t) };
+        let dim = |t: f64| Look {
+            brightness: 30.0,
+            ..here(t)
+        };
         let ev = run(&mut r, 0.0, 1300.0, dim);
         assert_eq!(ev, vec![Event::DarkTip { at: 600.0 }]);
     }
@@ -451,10 +584,16 @@ mod tests {
     #[test]
     fn sip_needs_two_checks_and_cools_down() {
         let mut r = Rules::new(Settings::default());
-        let drink = |t: f64| Look { drink_at_hand: true, ..here(t) };
+        let drink = |t: f64| Look {
+            drink_at_hand: true,
+            ..here(t)
+        };
         assert!(run(&mut r, 0.0, 0.5, drink).is_empty());
         assert_eq!(run(&mut r, 0.5, 5.0, drink), vec![Event::Sip { at: 0.5 }]);
         assert!(run(&mut r, 5.0, 200.0, drink).is_empty());
-        assert_eq!(run(&mut r, 300.5, 301.0, drink), vec![Event::Sip { at: 300.5 }]);
+        assert_eq!(
+            run(&mut r, 300.5, 301.0, drink),
+            vec![Event::Sip { at: 300.5 }]
+        );
     }
 }

@@ -129,3 +129,48 @@ export function describe(e: LiveEvent): string {
       return "Took a sip (Shrubert will water a plant for this later)";
   }
 }
+
+// ---------- your own test clips (camera plan, step 3) ----------
+
+export interface ClipSpec {
+  id: string;
+  title: string;
+  how: string;
+  secs: number;
+  expect: Record<"phone" | "away" | "unclear" | "sip" | "interrupted", boolean | null>;
+}
+export interface ClipMeta { id: string; camera: string; recorded_at: number; frames: number; width: number; height: number }
+export interface ClipScore {
+  id: string;
+  passed: boolean;
+  phone: boolean;
+  away: boolean;
+  unclear: boolean;
+  sip: boolean;
+  interrupted: boolean;
+  phone_frames: number;
+  seen_frames: number;
+  frames: number;
+  misses: string[];
+}
+export interface CheckScore { check: string; engine: string; clips: ClipScore[]; check_ms: number }
+
+export const listClips = () => invoke<{ folder: string; clips: { spec: ClipSpec; recorded: ClipMeta | null }[] }>("clips_list");
+export const recordClip = (id: string, camera: Camera) => invoke<ClipMeta>("clip_record", { id, cameraId: camera.id, cameraName: camera.name });
+export const stopClips = () => invoke("clips_stop").catch(() => {});
+export const deleteClips = (id: string | null) => invoke("clips_delete", { id });
+export const scoreClips = (checks: string[], gpu: boolean, phone: boolean) => invoke<CheckScore[]>("clips_score", { checks, gpu, phone });
+export interface ClipProgress { id: string; done: number; total: number; count: number; preview: string | null }
+export const onClipProgress = (f: (p: ClipProgress) => void) => listen<ClipProgress>("clip-progress", (e) => f(e.payload));
+export const onScoreProgress = (f: (p: { check: string; clip: string; done: number; total: number }) => void) =>
+  listen<{ check: string; clip: string; done: number; total: number }>("clip-score-progress", (e) => f(e.payload));
+
+/** Frames with a phone at a hand: the share of phone-in-hand frames caught, and of other frames wrongly flagged. */
+export function phoneRates(clips: ClipScore[], specs: ClipSpec[]) {
+  const want = (c: ClipScore) => specs.find((s) => s.id === c.id)?.expect.phone;
+  const rate = (cs: ClipScore[]) => {
+    const n = cs.reduce((a, c) => a + c.frames, 0);
+    return n ? cs.reduce((a, c) => a + c.phone_frames * c.frames, 0) / n : null;
+  };
+  return { caught: rate(clips.filter((c) => want(c) === true)), wrong: rate(clips.filter((c) => want(c) === false)) };
+}
