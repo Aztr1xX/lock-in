@@ -466,6 +466,7 @@ mod tests {
             bytes: 0,
             sha256: String::new(),
             cpu_only: false,
+            timing_only: false,
         }
     }
 
