@@ -7,6 +7,7 @@
 
 pub mod clips;
 pub mod peek;
+pub mod posture;
 pub mod rules;
 pub mod session;
 pub mod worker;

@@ -3,7 +3,7 @@
   // window, so the check keeps running when the window is minimised or closed to the tray.
   import { onMount } from "svelte";
   import {
-    DEFAULT_CHECK, describe, duration, listCameras, listChecks, onLive, onTile, preferred, setPreview, startLive, startPeek, stopLive, stopPeek,
+    DEFAULT_CHECK, describe, duration, postureHere, slumpWords, listCameras, listChecks, onLive, onTile, preferred, setPreview, startLive, startPeek, stopLive, stopPeek,
     type Camera, type LiveEvent, type Seen, type State, type Stats, type Update,
   } from "./live";
 
@@ -24,6 +24,7 @@
   let check = $state(DEFAULT_CHECK);
   let gpu = $state(true);
   let phone = $state(true);
+  let posture = $state(true);
   let loadError = $state("");
 
   // ---------- picker ----------
@@ -74,26 +75,35 @@
   let brightness = $state(0);
   let log = $state<{ at: number; text: string; kind: LiveEvent["kind"] }[]>([]);
   let problem = $state("");
-  let counts = $state({ away: 0, phone: 0, interrupt: 0, covered: 0 });
+  let counts = $state({ away: 0, phone: 0, interrupt: 0, covered: 0, slump: 0 });
 
   async function start() {
     if (!camera) return;
     phase = "starting";
     problem = "";
     log = [];
-    counts = { away: 0, phone: 0, interrupt: 0, covered: 0 };
+    counts = { away: 0, phone: 0, interrupt: 0, covered: 0, slump: 0 };
     stats = null;
     st = null;
     seen = null;
     picture = "";
     try {
       if (picking) await closePicker();
-      await startLive({ camera, check, gpu, phone });
+      await startLive({ camera, check, gpu, phone, posture });
     } catch (e) {
       problem = String(e);
       phase = "off";
     }
   }
+  // "This is how I sit": the next check's posture becomes your normal for this camera.
+  async function sitLikeThis() {
+    try {
+      await postureHere();
+    } catch (e) {
+      problem = String(e);
+    }
+  }
+
   async function stop() {
     if (phase === "off") return;
     await stopLive().catch(() => {});
@@ -122,6 +132,7 @@
           if (e.kind === "phone_start") counts.phone++;
           if (e.kind === "interrupt_start") counts.interrupt++;
           if (e.kind === "health" && e.health !== "ok") counts.covered++;
+          if (e.kind === "slump") counts.slump++;
         }
         break;
       case "problem":
@@ -186,7 +197,7 @@
       `Live camera check: ${started.camera}, ${started.check} on the ${started.engine === "gpu" ? "graphics chip" : "CPU"}, sandbox ${started.sandbox.on ? "on" : `OFF (${started.sandbox.error ?? ""})`}.`,
       `  Ran ${duration(s.running_secs)}: ${s.checks} checks (${s.failed_checks} failed), ${s.check_ms.toFixed(0)} ms each, ${s.rate} a second${s.core_pct != null ? `, ${s.core_pct.toFixed(1)}% of one core (models ${s.worker_pct?.toFixed(1)}%, camera and app ${s.app_pct?.toFixed(1)}%)` : ""}, worker restarts ${s.worker_restarts}.`,
       `  Minimised or hidden: ${duration(s.hidden_secs)} with ${s.hidden_checks} checks; longest gap between checks ${s.longest_gap.toFixed(1)} s.`,
-      `  Seen: away ${counts.away}x, phone ${counts.phone}x, interrupted ${counts.interrupt}x, camera covered or frozen ${counts.covered}x.`,
+      `  Seen: away ${counts.away}x, phone ${counts.phone}x, interrupted ${counts.interrupt}x, camera covered or frozen ${counts.covered}x, posture nudges ${counts.slump}x.`,
     ].join("\n");
   });
 </script>
@@ -228,6 +239,7 @@
     </label>
     <label class="tick"><input type="checkbox" bind:checked={gpu} disabled={phase !== "off"} /> Use the graphics chip if it can</label>
     <label class="tick"><input type="checkbox" bind:checked={phone} disabled={phase !== "off"} /> Check for my phone</label>
+    <label class="tick"><input type="checkbox" bind:checked={posture} disabled={phase !== "off"} /> Check my posture</label>
   </div>
 
   <div class="row">
@@ -271,6 +283,13 @@
             <dd class:warn={st.interrupted}>{seen?.people ?? 0}{st.interrupted ? ", interrupted" : ""}</dd>
             {#if seen?.phone}<dt>Phone score</dt><dd>{Math.round(seen.phone.score * 100)}%{seen.phone.near_wrist ? ", at your hand" : ""}</dd>{/if}
             <dt>Light</dt><dd>{brightness < 45 ? "Dim" : "Fine"} ({Math.round(brightness)})</dd>
+            {#if st.posture}
+              <dt>Posture</dt>
+              <dd class:warn={st.posture.slumped_for >= 60}>
+                {#if st.posture.learning}Learning how you normally sit{:else if st.posture.slumps.length}Slumped for {duration(st.posture.slumped_for)}: {slumpWords(st.posture.slumps)}{:else}Fine{/if}
+                <button class="link small-link" onclick={sitLikeThis} disabled={!seen?.keypoints?.length}>This is how I sit</button>
+              </dd>
+            {/if}
           </dl>
         {/if}
         {#if stats}
@@ -322,6 +341,7 @@
   .dot { position: absolute; top: 10px; right: 10px; width: 10px; height: 10px; border-radius: 50%; background: #e05a4f; box-shadow: 0 0 0 3px rgb(0 0 0 / 0.35); }
   .stats { padding-top: 8px; border-top: 1px solid var(--line); }
   .stats small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .small-link { display: block; padding: 2px 0 0; font-size: 13px; }
   .log li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .log li span:last-child { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
 </style>

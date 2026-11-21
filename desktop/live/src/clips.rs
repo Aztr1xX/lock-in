@@ -21,6 +21,8 @@ pub struct Expect {
     pub unclear: Option<bool>,
     pub sip: Option<bool>,
     pub interrupted: Option<bool>,
+    /// Slumped compared with your "Sitting normally" clip (judged only when that one is recorded).
+    pub slump: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +48,14 @@ const fn e(
         unclear,
         sip,
         interrupted,
+        slump: None,
+    }
+}
+/// The same, with a posture expectation.
+const fn p(x: Expect, slump: bool) -> Expect {
+    Expect {
+        slump: Some(slump),
+        ..x
     }
 }
 const Y: Option<bool> = Some(true);
@@ -56,14 +66,14 @@ const X: Option<bool> = None;
 pub const SPECS: &[Spec] = &[
     Spec { id: "phone-hand", title: "Phone in your hand", how: "Hold your phone and use it the way you normally would, scrolling or typing.", secs: 20, expect: e(Y, N, N, X, N) },
     Spec { id: "phone-low", title: "Phone held low", how: "Use your phone low down, near the desk edge or in your lap.", secs: 20, expect: e(Y, N, X, X, N) },
-    Spec { id: "phone-desk", title: "Phone on the desk", how: "Put your phone on the desk next to you and don't touch it. Hands on the desk or keyboard.", secs: 20, expect: e(N, N, N, X, N) },
-    Spec { id: "ipad-read", title: "Reading your iPad", how: "Read on your iPad the way you study, looking down at it.", secs: 60, expect: e(N, N, N, X, N) },
-    Spec { id: "ipad-write", title: "Writing on your iPad", how: "Write or draw on your iPad with the pencil.", secs: 40, expect: e(N, N, N, X, N) },
+    Spec { id: "phone-desk", title: "Phone on the desk", how: "Put your phone on the desk next to you and don't touch it. Hands on the desk or keyboard.", secs: 20, expect: p(e(N, N, N, X, N), false) },
+    Spec { id: "ipad-read", title: "Reading your iPad", how: "Read on your iPad the way you study, looking down at it.", secs: 60, expect: p(e(N, N, N, X, N), false) },
+    Spec { id: "ipad-write", title: "Writing on your iPad", how: "Write or draw on your iPad with the pencil.", secs: 40, expect: p(e(N, N, N, X, N), false) },
     Spec { id: "ipad-hold", title: "Holding your iPad up", how: "Hold your iPad up in both hands, like reading in bed.", secs: 20, expect: e(N, N, X, X, N) },
     Spec { id: "drink", title: "Having a drink", how: "Take a sip from a cup or bottle two or three times, putting it down in between.", secs: 25, expect: e(N, N, N, Y, N) },
-    Spec { id: "sit-well", title: "Sitting normally", how: "Sit the way you do when you're focused and comfortable.", secs: 30, expect: e(N, N, N, X, N) },
-    Spec { id: "slouch", title: "Slouching", how: "Slouch the way you do when you're tired. (Used for the posture step later.)", secs: 30, expect: e(N, N, X, X, N) },
-    Spec { id: "lean-in", title: "Leaning in close", how: "Lean in close to the screen, like reading small text.", secs: 20, expect: e(N, N, X, X, N) },
+    Spec { id: "sit-well", title: "Sitting normally", how: "Sit the way you do when you're focused and comfortable. The posture clips are judged against this one.", secs: 30, expect: e(N, N, N, X, N) },
+    Spec { id: "slouch", title: "Slouching", how: "Slouch the way you do when you're tired.", secs: 30, expect: p(e(N, N, X, X, N), true) },
+    Spec { id: "lean-in", title: "Leaning in close", how: "Lean in close to the screen, like reading small text.", secs: 20, expect: p(e(N, N, X, X, N), true) },
     Spec { id: "leave", title: "Leaving and coming back", how: "Stand up and walk out of view. Come back after about 25 seconds and sit down.", secs: 50, expect: e(N, Y, N, X, N) },
     Spec { id: "lean-out", title: "Leaning out of view", how: "Lean out of view to grab something, and be back within 10 seconds.", secs: 20, expect: e(N, N, N, X, N) },
     Spec { id: "someone", title: "Someone walks past", how: "Have someone walk behind you once. Skip this one if nobody's around.", secs: 20, expect: e(N, N, N, X, N) },
@@ -209,6 +219,8 @@ pub struct ClipScore {
     pub unclear: bool,
     pub sip: bool,
     pub interrupted: bool,
+    /// Slumped compared with your "Sitting normally" clip, when that one is recorded.
+    pub slump: Option<bool>,
     /// Share of frames with a phone at a hand (what the detector itself saw, before the rules).
     pub phone_frames: f64,
     /// Share of frames where you were seen (person box or shoulders).
@@ -218,8 +230,40 @@ pub struct ClipScore {
     pub misses: Vec<String>,
 }
 
+/// How you normally sit, from the "Sitting normally" clip's looks.
+pub fn normal_from(looks: &[Look]) -> Option<crate::posture::Sample> {
+    let poses: Vec<_> = looks.iter().filter_map(|l| l.pose).collect();
+    if poses.len() < 10 {
+        return None;
+    }
+    crate::posture::normal_of(&poses)
+}
+
+/// Whether a clip shows a slump against `normal`: the smoothed posture is off in at least half
+/// of the clear checks in its second half (the first half is for settling into it). Clips are too
+/// short for the live check's 3 minutes, so this judges the same measures without the wait.
+fn slumped(looks: &[Look], normal: &crate::posture::Sample) -> bool {
+    let mut sm = crate::posture::Smoother::default();
+    let judged: Vec<bool> = looks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let s = sm.push(l.pose);
+            (i * 2 >= looks.len() && l.pose.is_some())
+                .then(|| s.is_some_and(|s| !crate::posture::slumps(&s, normal).is_empty()))
+        })
+        .collect();
+    !judged.is_empty() && judged.iter().filter(|&&b| b).count() * 2 >= judged.len()
+}
+
 /// Plays one clip's looks through fresh rules and judges them against the clip's expectations.
-pub fn judge(spec: &Spec, looks: &[Look], settings: Settings) -> ClipScore {
+/// `normal`: how you sit normally (from the "Sitting normally" clip), for the posture clips.
+pub fn judge(
+    spec: &Spec,
+    looks: &[Look],
+    settings: Settings,
+    normal: Option<&crate::posture::Sample>,
+) -> ClipScore {
     let mut rules = Rules::new(settings);
     let (mut phone, mut away, mut unclear, mut sip, mut interrupted) =
         (false, false, false, false, false);
@@ -254,6 +298,15 @@ pub fn judge(spec: &Spec, looks: &[Look], settings: Settings) -> ClipScore {
         }
     };
     let x = spec.expect;
+    let slump = normal.map(|n| slumped(looks, n));
+    if let Some(got) = slump {
+        check(
+            x.slump,
+            got,
+            "missed the slump",
+            "said you were slumped when you weren't",
+        );
+    }
     check(
         x.phone,
         phone,
@@ -286,6 +339,7 @@ pub fn judge(spec: &Spec, looks: &[Look], settings: Settings) -> ClipScore {
     );
     ClipScore {
         id: spec.id.to_string(),
+        slump,
         passed: misses.is_empty(),
         phone,
         away,
@@ -316,6 +370,7 @@ pub fn looks(
         out.push(crate::session::to_look(
             i as f64 / FPS,
             &v,
+            (f.width, f.height),
             f.brightness(),
             change,
         ));
@@ -352,7 +407,7 @@ pub fn score(
     for check in checks {
         let mut live = crate::worker::Live::start(worker, models, check, gpu)?;
         let mut times = Vec::new();
-        let mut clips = Vec::new();
+        let mut played = Vec::new();
         for (i, m) in recorded.iter().enumerate() {
             let Some(spec) = spec(&m.id) else { continue };
             let f = frames(root, &m.id)?;
@@ -362,11 +417,19 @@ pub fn score(
                 times.push(t.elapsed().as_secs_f64() * 1000.0);
                 v
             })?;
-            clips.push(judge(spec, &l, settings));
+            played.push((spec, l));
             if !progress(check, &m.id, i + 1, recorded.len()) {
                 return Err("Stopped".into());
             }
         }
+        let normal = played
+            .iter()
+            .find(|(s, _)| s.id == "sit-well")
+            .and_then(|(_, l)| normal_from(l));
+        let clips: Vec<ClipScore> = played
+            .iter()
+            .map(|(spec, l)| judge(spec, l, settings, normal.as_ref()))
+            .collect();
         times.sort_by(f64::total_cmp);
         let check_ms = times.get(times.len() / 2).copied().unwrap_or(0.0);
         out.push(CheckScore {
@@ -474,18 +537,90 @@ mod tests {
         };
         let hand = spec("phone-hand").unwrap();
         let caught: Vec<Look> = (0..40).map(|i| me(i as f64 / 2.0, true)).collect();
-        let s = judge(hand, &caught, Settings::default());
+        let s = judge(hand, &caught, Settings::default(), None);
         assert!(
             s.passed && s.phone && (s.phone_frames - 1.0).abs() < 1e-9,
             "{s:?}"
         );
         let missed: Vec<Look> = (0..40).map(|i| me(i as f64 / 2.0, false)).collect();
-        let s = judge(hand, &missed, Settings::default());
+        let s = judge(hand, &missed, Settings::default(), None);
         assert!(!s.passed && s.misses == vec!["missed the phone".to_string()]);
         let ipad = spec("ipad-read").unwrap();
         assert!(
-            !judge(ipad, &caught, Settings::default()).passed,
+            !judge(ipad, &caught, Settings::default(), None).passed,
             "a phone flagged while reading the iPad is a fail"
+        );
+    }
+
+    #[test]
+    fn posture_clips_are_judged_against_sitting_normally() {
+        use crate::posture::Sample;
+        let at = |t: f64, pose: Sample| Look {
+            t,
+            people: 1,
+            person: true,
+            shoulders: true,
+            brightness: 120.0,
+            change: 3.0,
+            pose: Some(pose),
+            ..Default::default()
+        };
+        let good = Sample {
+            w: 0.31,
+            y: 0.62,
+            neck: Some(0.66),
+            tilt: 0.0,
+        };
+        let slouch = Sample {
+            w: 0.31,
+            y: 0.75,
+            neck: Some(0.4),
+            tilt: 0.0,
+        };
+        let normal = normal_from(
+            &(0..60)
+                .map(|i| at(i as f64 / 2.0, good))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let clip = |pose| {
+            (0..60)
+                .map(|i| at(i as f64 / 2.0, pose))
+                .collect::<Vec<_>>()
+        };
+        let s = judge(
+            spec("slouch").unwrap(),
+            &clip(slouch),
+            Settings::default(),
+            Some(&normal),
+        );
+        assert!(s.passed && s.slump == Some(true), "{s:?}");
+        let s = judge(
+            spec("ipad-read").unwrap(),
+            &clip(good),
+            Settings::default(),
+            Some(&normal),
+        );
+        assert!(s.passed && s.slump == Some(false), "{s:?}");
+        let s = judge(
+            spec("ipad-read").unwrap(),
+            &clip(slouch),
+            Settings::default(),
+            Some(&normal),
+        );
+        assert!(
+            !s.passed && s.misses == vec!["said you were slumped when you weren't".to_string()]
+        );
+        // Without a "Sitting normally" clip, posture isn't judged.
+        assert_eq!(
+            judge(
+                spec("slouch").unwrap(),
+                &clip(good),
+                Settings::default(),
+                None
+            )
+            .slump,
+            None
         );
     }
 

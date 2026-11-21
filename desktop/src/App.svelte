@@ -248,6 +248,8 @@
     { id: "live-away", group: "Live camera check", text: "Walking away for 20 s showed Away, and sitting down showed Here again within a few seconds" },
     { id: "live-ipad", group: "Live camera check", text: "Reading your iPad for 5 minutes never showed Away or Phone" },
     { id: "live-phone", group: "Live camera check", text: "Holding your phone showed \"In your hand\" within about 5 s (this model isn't trained for it yet, so misses are expected)" },
+    { id: "live-posture", group: "Live camera check", text: "Posture went from \"Learning\" to \"Fine\" after about a minute, and slouching for 3 minutes logged a nudge" },
+    { id: "live-posture-ipad", group: "Live camera check", text: "Reading your iPad never showed you as slumped" },
     { id: "live-cover", group: "Live camera check", text: "Covering the camera said it looks covered, not Away" },
     { id: "clips-record", group: "Test clips", text: "Recorded the phone, iPad and leaving clips (more if you can)" },
     { id: "clips-preview", group: "Test clips", text: "The countdown and picture showed while recording" },

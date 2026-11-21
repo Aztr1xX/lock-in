@@ -245,6 +245,12 @@ mod live {
         check: String,
         gpu: bool,
         phone: bool,
+        #[serde(default = "yes")]
+        posture: bool,
+    }
+
+    fn yes() -> bool {
+        true
     }
 
     #[tauri::command]
@@ -264,8 +270,10 @@ mod live {
                 gpu: opts.gpu,
                 settings: Settings {
                     phone: opts.phone,
+                    posture: opts.posture,
                     ..Settings::default()
                 },
+                posture_file: app.path().app_local_data_dir().ok().map(|d| d.join("posture.json")),
             };
             let emitter = app.clone();
             let hidden = || HIDDEN.load(Ordering::Relaxed);
@@ -296,6 +304,15 @@ mod live {
     pub async fn camera_live_preview(on: bool) -> Result<(), String> {
         if let Some(s) = SESSION.lock().unwrap().as_ref() {
             s.set_preview(on);
+        }
+        Ok(())
+    }
+
+    /// "This is how I sit".
+    #[tauri::command]
+    pub async fn camera_live_posture_here() -> Result<(), String> {
+        if let Some(s) = SESSION.lock().unwrap().as_ref() {
+            s.set_posture_here();
         }
         Ok(())
     }
@@ -629,6 +646,7 @@ pub fn run() {
             live::camera_live_stop,
             live::camera_live_preview,
             live::camera_live_running,
+            live::camera_live_posture_here,
             live::camera_peek_start,
             live::camera_peek_stop,
             clips::clips_list,

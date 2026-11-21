@@ -1,6 +1,7 @@
 //! One live camera session: the camera on its thread, the worker in its sandbox, and the rules,
 //! run twice a second until stopped. Everything it reports goes out through one callback.
 
+use crate::posture::{Baseline, Saved};
 use crate::rules::{Event, Look, PhoneSeen, Rules, Settings, State};
 use crate::worker::{Live, SandboxState};
 use lockin_capture::{CaptureError, Frame, Stream};
@@ -24,6 +25,8 @@ pub struct Options {
     /// Try the graphics chip first.
     pub gpu: bool,
     pub settings: Settings,
+    /// Where your posture normals are remembered (a small JSON file), if anywhere.
+    pub posture_file: Option<PathBuf>,
 }
 
 /// How the session is doing, for the "does it keep running when minimised" test.
@@ -90,6 +93,7 @@ pub enum Update {
 pub struct Session {
     stop: Arc<AtomicBool>,
     preview: Arc<AtomicBool>,
+    posture_here: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -103,19 +107,26 @@ impl Session {
     ) -> Session {
         let stop = Arc::new(AtomicBool::new(false));
         let preview = Arc::new(AtomicBool::new(false));
-        let (s, p) = (stop.clone(), preview.clone());
+        let posture_here = Arc::new(AtomicBool::new(false));
+        let (s, p, h) = (stop.clone(), preview.clone(), posture_here.clone());
         let thread = std::thread::Builder::new()
             .name("camera-check".into())
             .spawn(move || {
-                let stats = run(&opts, &s, &p, &mut on_update, &hidden);
+                let stats = run(&opts, &s, &p, &h, &mut on_update, &hidden);
                 on_update(Update::Stopped { stats });
             })
             .ok();
         Session {
             stop,
             preview,
+            posture_here,
             thread,
         }
+    }
+
+    /// "This is how I sit": takes how you're sitting at the next check as your normal.
+    pub fn set_posture_here(&self) {
+        self.posture_here.store(true, Ordering::SeqCst);
     }
 
     /// Turns the live preview pictures on or off (off when nobody is looking, to save work).
@@ -147,6 +158,7 @@ fn run(
     opts: &Options,
     stop: &AtomicBool,
     preview: &AtomicBool,
+    posture_here: &AtomicBool,
     emit: &mut dyn FnMut(Update),
     hidden: &dyn Fn() -> bool,
 ) -> Stats {
@@ -184,7 +196,12 @@ fn run(
         height: first.as_ref().map_or(0, |f| f.height),
     });
 
-    let mut rules = Rules::new(opts.settings);
+    let mut saved = opts
+        .posture_file
+        .as_deref()
+        .map(load_postures)
+        .unwrap_or_default();
+    let mut rules = Rules::new(opts.settings).with_normal(saved.normal(&opts.camera_id));
     let start = Instant::now();
     let mut prev: Option<Frame> = first;
     let mut recent_ms: Vec<f64> = Vec::new();
@@ -264,8 +281,12 @@ fn run(
         };
         let took = began.elapsed().as_secs_f64() * 1000.0;
 
-        let look = to_look(t, &seen, brightness, change);
-        let events = rules.update(&look);
+        let look = to_look(t, &seen, (frame.width, frame.height), brightness, change);
+        let mut events = rules.update(&look);
+        if posture_here.swap(false, Ordering::SeqCst) {
+            events.extend(rules.set_posture_here());
+        }
+        remember_postures(opts, &mut saved, &events);
         if !events.is_empty() {
             emit(Update::Events { events });
         }
@@ -340,7 +361,44 @@ fn median(v: &[f64]) -> f64 {
 }
 
 /// Reads the worker's answer for the rules.
-pub fn to_look(t: f64, v: &Value, brightness: f32, change: f32) -> Look {
+fn load_postures(path: &std::path::Path) -> Saved {
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Keeps a newly learned or set posture normal in the file, so the next session starts from it.
+fn remember_postures(opts: &Options, saved: &mut Saved, events: &[Event]) {
+    let Some(path) = opts.posture_file.as_deref() else {
+        return;
+    };
+    let mut changed = false;
+    for e in events {
+        if let Event::PostureNormal { normal, set, .. } = e {
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            saved.remember(Baseline {
+                s: *normal,
+                camera: opts.camera_id.clone(),
+                at,
+                set: *set,
+            });
+            changed = true;
+        }
+    }
+    if changed {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, serde_json::to_vec_pretty(saved).unwrap_or_default());
+    }
+}
+
+/// `size`: the frame's width and height, which posture is measured against.
+pub fn to_look(t: f64, v: &Value, size: (u32, u32), brightness: f32, change: f32) -> Look {
     let num = |x: &Value| x.as_f64().map(|f| f as f32);
     let kp = v["keypoints"].as_array();
     let point_ok = |i: usize| {
@@ -354,7 +412,14 @@ pub fn to_look(t: f64, v: &Value, brightness: f32, change: f32) -> Look {
         near_wrist: p["near_wrist"].as_bool().unwrap_or(false),
         long_side_shoulders: num(&p["long_side_shoulders"]),
     });
+    let points: Vec<[f32; 3]> = kp
+        .into_iter()
+        .flatten()
+        .map(|p| [0, 1, 2].map(|i| p.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32))
+        .collect();
+    let pose = crate::posture::measure(&points, size.0 as f32, size.1 as f32);
     Look {
+        pose,
         t,
         people: v["people"].as_u64().unwrap_or(0) as u32,
         person: !v["person"].is_null(),
@@ -401,7 +466,7 @@ mod tests {
             "drink": null,
             "keypoints": [[0,0,0.9],[0,0,0.9],[0,0,0.9],[0,0,0.9],[0,0,0.9],[1,1,0.8],[2,2,0.2]],
         });
-        let l = to_look(3.0, &v, 100.0, 2.0);
+        let l = to_look(3.0, &v, (640, 480), 100.0, 2.0);
         assert_eq!(l.people, 1);
         assert!(l.person);
         assert!(!l.shoulders, "right shoulder too unsure");
@@ -411,6 +476,7 @@ mod tests {
         let none = to_look(
             0.0,
             &json!({ "people": 0, "person": null, "phone": null }),
+            (640, 480),
             0.0,
             0.0,
         );

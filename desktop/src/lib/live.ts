@@ -13,6 +13,15 @@ export interface Camera {
 }
 
 export type Presence = "here" | "away" | "unknown";
+export type Slump = "sinking" | "leaning_in" | "neck" | "leaning_sideways";
+
+export interface PostureState {
+  /** Still learning how you normally sit. */
+  learning: boolean;
+  slumps: Slump[];
+  /** Seconds slumped so far. */
+  slumped_for: number;
+}
 export type Health = "ok" | "covered" | "frozen";
 
 export interface State {
@@ -22,6 +31,7 @@ export interface State {
   phone_hits: number;
   interrupted: boolean;
   health: Health;
+  posture: PostureState | null;
 }
 
 export interface Stats {
@@ -59,7 +69,9 @@ export type LiveEvent =
   | { kind: "interrupt_end"; at: number; secs: number }
   | { kind: "health"; at: number; health: Health }
   | { kind: "dark_tip"; at: number }
-  | { kind: "sip"; at: number };
+  | { kind: "sip"; at: number }
+  | { kind: "slump"; at: number; slumps: Slump[] }
+  | { kind: "posture_normal"; at: number; set: boolean };
 
 export type Update =
   | { type: "started"; camera: string; engine: string; check: string; sandbox: { on: boolean; error?: string }; width: number; height: number }
@@ -76,9 +88,19 @@ export type Tile =
 export const listCameras = () => invoke<Camera[]>("camera_list");
 export const listChecks = () => invoke<string[]>("camera_checks");
 
-export function startLive(o: { camera: Camera; check: string; gpu: boolean; phone: boolean }) {
-  return invoke("camera_live_start", { opts: { camera_id: o.camera.id, camera_name: o.camera.name, check: o.check, gpu: o.gpu, phone: o.phone } });
+export function startLive(o: { camera: Camera; check: string; gpu: boolean; phone: boolean; posture: boolean }) {
+  return invoke("camera_live_start", { opts: { camera_id: o.camera.id, camera_name: o.camera.name, check: o.check, gpu: o.gpu, phone: o.phone, posture: o.posture } });
 }
+export const postureHere = () => invoke("camera_live_posture_here");
+
+const SLUMP_WORDS: Record<Slump, string> = {
+  sinking: "sinking in your chair",
+  leaning_in: "leaning in close",
+  neck: "head pushed forward",
+  leaning_sideways: "leaning to one side",
+};
+/** "sinking in your chair and leaning in close" */
+export const slumpWords = (s: Slump[]) => s.map((k) => SLUMP_WORDS[k]).join(" and ");
 export const stopLive = () => invoke("camera_live_stop");
 export const setPreview = (on: boolean) => invoke("camera_live_preview", { on }).catch(() => {});
 export const onLive = (f: (u: Update) => void): Promise<UnlistenFn> => listen<Update>("camera-live", (e) => f(e.payload));
@@ -127,6 +149,10 @@ export function describe(e: LiveEvent): string {
       return "The room has been dim for 10 minutes. More light helps the camera and your eyes.";
     case "sip":
       return "Took a sip (Shrubert will water a plant for this later)";
+    case "slump":
+      return `Slumped for 3 minutes: ${slumpWords(e.slumps)}`;
+    case "posture_normal":
+      return e.set ? "Saved how you sit now as your normal" : "Learned how you normally sit";
   }
 }
 
@@ -137,7 +163,7 @@ export interface ClipSpec {
   title: string;
   how: string;
   secs: number;
-  expect: Record<"phone" | "away" | "unclear" | "sip" | "interrupted", boolean | null>;
+  expect: Record<"phone" | "away" | "unclear" | "sip" | "interrupted" | "slump", boolean | null>;
 }
 export interface ClipMeta { id: string; camera: string; recorded_at: number; frames: number; width: number; height: number }
 export interface ClipScore {
@@ -148,6 +174,7 @@ export interface ClipScore {
   unclear: boolean;
   sip: boolean;
   interrupted: boolean;
+  slump: boolean | null;
   phone_frames: number;
   seen_frames: number;
   frames: number;

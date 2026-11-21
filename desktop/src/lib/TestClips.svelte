@@ -101,7 +101,7 @@
     for (const r of results) {
       const { caught, wrong } = phoneRates(r.clips, specs);
       lines.push(`  ${r.check} on the ${r.engine === "gpu" ? "graphics chip" : "CPU"}, ${r.check_ms.toFixed(0)} ms a check: ${r.clips.filter((c) => c.passed).length} of ${r.clips.length} clips right; phone seen in ${pct(caught)} of phone frames, wrongly in ${pct(wrong)} of the rest.`);
-      for (const c of r.clips) lines.push(`    ${c.passed ? "OK" : "WRONG"} ${c.id}: phone ${pct(c.phone_frames)}, you seen ${pct(c.seen_frames)}${c.misses.length ? `, ${c.misses.join("; ")}` : ""}`);
+      for (const c of r.clips) lines.push(`    ${c.passed ? "OK" : "WRONG"} ${c.id}: phone ${pct(c.phone_frames)}, you seen ${pct(c.seen_frames)}${c.slump == null ? "" : `, slumped ${c.slump ? "yes" : "no"}`}${c.misses.length ? `, ${c.misses.join("; ")}` : ""}`);
     }
     text = lines.join("\n");
   });

@@ -12,7 +12,10 @@
 //!   frozen. While the camera isn't healthy you are never counted as away.
 //! - Room too dark: dim for 10 minutes gives one gentle tip.
 //! - Sip: a cup or bottle at your hand in two checks in a row, at most every 5 minutes.
+//! - Posture: judged against how you normally sit, once a second; a nudge after 3 minutes of
+//!   steady slump, at most every 10 minutes (see posture.rs).
 
+use crate::posture::{Posture, PostureEvent, PostureState, Sample, Slump};
 use serde::Serialize;
 use std::collections::VecDeque;
 
@@ -30,6 +33,8 @@ pub struct Look {
     pub brightness: f32,
     /// How different the frame is from the previous one, 0 to 255.
     pub change: f32,
+    /// How you're sitting, when both shoulders are clear.
+    pub pose: Option<Sample>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,6 +51,8 @@ pub struct Settings {
     pub phone: bool,
     /// Lowest detector score that counts as a phone sighting.
     pub phone_score: f32,
+    /// "Check my posture".
+    pub posture: bool,
 }
 
 impl Default for Settings {
@@ -53,6 +60,7 @@ impl Default for Settings {
         Settings {
             phone: true,
             phone_score: 0.4,
+            posture: true,
         }
     }
 }
@@ -95,15 +103,48 @@ pub enum Health {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
-    Away { at: f64 },
-    Back { at: f64, away_secs: f64 },
-    PhoneStart { at: f64 },
-    PhoneEnd { at: f64, secs: f64 },
-    InterruptStart { at: f64 },
-    InterruptEnd { at: f64, secs: f64 },
-    Health { at: f64, health: Health },
-    DarkTip { at: f64 },
-    Sip { at: f64 },
+    Away {
+        at: f64,
+    },
+    Back {
+        at: f64,
+        away_secs: f64,
+    },
+    PhoneStart {
+        at: f64,
+    },
+    PhoneEnd {
+        at: f64,
+        secs: f64,
+    },
+    InterruptStart {
+        at: f64,
+    },
+    InterruptEnd {
+        at: f64,
+        secs: f64,
+    },
+    Health {
+        at: f64,
+        health: Health,
+    },
+    DarkTip {
+        at: f64,
+    },
+    Sip {
+        at: f64,
+    },
+    /// A posture nudge: slumped this way for 3 minutes.
+    Slump {
+        at: f64,
+        slumps: Vec<Slump>,
+    },
+    /// How you normally sit, learned this session or set with "This is how I sit", for the app to remember.
+    PostureNormal {
+        at: f64,
+        normal: Sample,
+        set: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +156,7 @@ pub struct State {
     pub phone_hits: usize,
     pub interrupted: bool,
     pub health: Health,
+    pub posture: Option<PostureState>,
 }
 
 pub struct Rules {
@@ -138,6 +180,7 @@ pub struct Rules {
     dark_tip_given: bool,
     last_drink: bool,
     last_sip: Option<f64>,
+    posture: Posture,
 }
 
 impl Rules {
@@ -163,6 +206,30 @@ impl Rules {
             dark_tip_given: false,
             last_drink: false,
             last_sip: None,
+            posture: Posture::new(None),
+        }
+    }
+
+    /// Starts the posture check from your remembered normal for this camera.
+    pub fn with_normal(mut self, normal: Option<Sample>) -> Rules {
+        self.posture = Posture::new(normal);
+        self
+    }
+
+    /// "This is how I sit".
+    pub fn set_posture_here(&mut self) -> Vec<Event> {
+        let t = self.last_t.unwrap_or(0.0);
+        self.posture
+            .set_here(t)
+            .into_iter()
+            .map(Self::posture_event)
+            .collect()
+    }
+
+    fn posture_event(e: PostureEvent) -> Event {
+        match e {
+            PostureEvent::Slump { at, slumps } => Event::Slump { at, slumps },
+            PostureEvent::Normal { at, normal, set } => Event::PostureNormal { at, normal, set },
         }
     }
 
@@ -174,6 +241,10 @@ impl Rules {
             phone_hits: self.phone_window.iter().filter(|&&h| h).count(),
             interrupted: self.interrupted_since.is_some(),
             health: self.health,
+            posture: self
+                .settings
+                .posture
+                .then(|| self.posture.state(self.last_t.unwrap_or(0.0))),
         }
     }
 
@@ -306,6 +377,22 @@ impl Rules {
             ev.push(Event::Sip { at: t });
         }
         self.last_drink = drink;
+
+        // ---- posture ----
+        // Only judged while you're here and the camera is fine.
+        if self.settings.posture {
+            let pose = if self.health == Health::Ok && self.presence == Presence::Here {
+                l.pose
+            } else {
+                None
+            };
+            ev.extend(
+                self.posture
+                    .update(t, pose)
+                    .into_iter()
+                    .map(Self::posture_event),
+            );
+        }
         ev
     }
 
