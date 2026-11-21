@@ -6,6 +6,7 @@
   import { blockedHosts, loadSites } from "./lib/sites";
   import AppList from "./lib/AppList.svelte";
   import CaughtCard from "./lib/CaughtCard.svelte";
+  import UpdatingCard from "./lib/UpdatingCard.svelte";
   import { buildRows, closedExes, type AppRow, type InstalledApp } from "./lib/apps";
   import { CamTest, coreShare, listCameras, openCamera, preferredCamera, type CamStats } from "./lib/camtest";
   import CameraBench from "./lib/CameraBench.svelte";
@@ -154,6 +155,22 @@
     await call({ cmd: "unblock" });
     guardMsg = "Unblocked.";
     refresh();
+  }
+
+  // ---------- installing an update ----------
+  // The installer runs silently, so the app shows its own calm screen while it closes and reopens.
+  let updating = $state<{ version: string; error?: string } | null>(null);
+
+  async function startUpdate() {
+    if (upd.kind !== "ready") return;
+    updating = { version: upd.version };
+    // Let the screen paint before the app closes for the installer.
+    await new Promise((r) => setTimeout(r, 600));
+    try {
+      await installNow();
+    } catch (e) {
+      updating = { version: upd.kind === "ready" ? upd.version : "", error: String(e) };
+    }
   }
 
   // ---------- caught opening an app ----------
@@ -324,7 +341,7 @@
   {#if upd.kind === "ready"}
     <div class="update">
       <span>Lock In {upd.version} is ready.</span>
-      <button onclick={installNow}>Restart to update</button>
+      <button onclick={startUpdate}>Restart to update</button>
     </div>
   {/if}
   <header>
@@ -498,5 +515,7 @@
     </p>
   </footer>
 </main>
+
+{#if updating}<UpdatingCard version={updating.version} error={updating.error} onclose={() => (updating = null)} />{/if}
 
 {#if caught}{#key caught}<CaughtCard name={caught.name} secondsLeft={caught.secondsLeft} ondone={() => (caught = null)} />{/key}{/if}
