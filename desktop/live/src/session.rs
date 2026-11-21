@@ -46,6 +46,10 @@ pub struct Stats {
     pub rate: f64,
     /// Share of one CPU core the camera work used (worker plus this app), when Windows says.
     pub core_pct: Option<f64>,
+    /// The same split into the sandboxed worker (the models) and this app (reading the camera,
+    /// preview pictures), to see where the time goes.
+    pub worker_pct: Option<f64>,
+    pub app_pct: Option<f64>,
     pub worker_restarts: u32,
 }
 
@@ -149,8 +153,7 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
     let mut recent_ms: Vec<f64> = Vec::new();
     let mut last_done = Instant::now();
     let mut next = Instant::now();
-    let cpu_start = cpu_total(&worker);
-    let mut cpu_mark = (Instant::now(), cpu_start);
+    let mut cpu_mark = (Instant::now(), cpu_split(&worker));
 
     while !stop.load(Ordering::SeqCst) {
         // Wait for the next tick in small steps so stopping is quick.
@@ -235,11 +238,13 @@ fn run(opts: &Options, stop: &AtomicBool, preview: &AtomicBool, emit: &mut dyn F
         stats.rate = if recent_ms.len() >= 6 && stats.check_ms > SLOW_MS { 1.0 } else { 2.0 };
         stats.camera_frames = stream.frames_seen();
         if cpu_mark.0.elapsed() >= Duration::from_secs(10) {
-            if let (Some(a), Some(b)) = (cpu_mark.1, cpu_total(&worker)) {
-                let wall = cpu_mark.0.elapsed().as_secs_f64() * 1000.0;
-                stats.core_pct = Some(((b - a) / wall * 100.0).max(0.0));
-            }
-            cpu_mark = (Instant::now(), cpu_total(&worker));
+            let now = cpu_split(&worker);
+            let wall = cpu_mark.0.elapsed().as_secs_f64() * 1000.0;
+            let pct = |a: Option<f64>, b: Option<f64>| Some(((b? - a?) / wall * 100.0).max(0.0));
+            stats.worker_pct = pct(cpu_mark.1 .0, now.0);
+            stats.app_pct = pct(cpu_mark.1 .1, now.1);
+            stats.core_pct = stats.worker_pct.zip(stats.app_pct).map(|(w, a)| w + a);
+            cpu_mark = (Instant::now(), now);
         }
         stats.running_secs = start.elapsed().as_secs_f64();
 
@@ -255,13 +260,13 @@ fn finish(mut stats: Stats, start: Instant) -> Stats {
     stats
 }
 
-/// Worker plus this app's CPU time so far, in ms (the app does the camera reading).
-fn cpu_total(w: &Live) -> Option<f64> {
+/// CPU time so far, in ms: the worker's, and this app's (which reads the camera).
+fn cpu_split(w: &Live) -> (Option<f64>, Option<f64>) {
     #[cfg(windows)]
     let own = lockin_sandbox::cpu_ms(None);
     #[cfg(not(windows))]
     let own: Option<f64> = None;
-    Some(w.cpu_ms()? + own?)
+    (w.cpu_ms(), own)
 }
 
 fn median(v: &[f64]) -> f64 {

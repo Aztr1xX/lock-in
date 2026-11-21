@@ -77,6 +77,8 @@ pub trait Stopper: Send {
 mod stream;
 pub use stream::Stream;
 
+pub mod yuv;
+
 #[cfg(windows)]
 mod mf;
 #[cfg(windows)]

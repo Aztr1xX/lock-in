@@ -35,6 +35,8 @@ export interface Stats {
   hidden_checks: number;
   rate: number;
   core_pct: number | null;
+  worker_pct: number | null;
+  app_pct: number | null;
   worker_restarts: number;
 }
 

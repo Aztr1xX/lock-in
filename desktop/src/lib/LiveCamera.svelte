@@ -184,7 +184,7 @@
     const s = stats;
     text = [
       `Live camera check: ${started.camera}, ${started.check} on the ${started.engine === "gpu" ? "graphics chip" : "CPU"}, sandbox ${started.sandbox.on ? "on" : `OFF (${started.sandbox.error ?? ""})`}.`,
-      `  Ran ${duration(s.running_secs)}: ${s.checks} checks (${s.failed_checks} failed), ${s.check_ms.toFixed(0)} ms each, ${s.rate} a second${s.core_pct != null ? `, ${s.core_pct.toFixed(1)}% of one core` : ""}, worker restarts ${s.worker_restarts}.`,
+      `  Ran ${duration(s.running_secs)}: ${s.checks} checks (${s.failed_checks} failed), ${s.check_ms.toFixed(0)} ms each, ${s.rate} a second${s.core_pct != null ? `, ${s.core_pct.toFixed(1)}% of one core (models ${s.worker_pct?.toFixed(1)}%, camera and app ${s.app_pct?.toFixed(1)}%)` : ""}, worker restarts ${s.worker_restarts}.`,
       `  Minimised or hidden: ${duration(s.hidden_secs)} with ${s.hidden_checks} checks; longest gap between checks ${s.longest_gap.toFixed(1)} s.`,
       `  Seen: away ${counts.away}x, phone ${counts.phone}x, interrupted ${counts.interrupt}x, camera covered or frozen ${counts.covered}x.`,
     ].join("\n");
@@ -277,7 +277,7 @@
           <dl class="stats">
             <dt>Running</dt><dd>{duration(stats.running_secs)}, {stats.checks} checks</dd>
             <dt>Per check</dt><dd>{stats.check_ms.toFixed(0)} ms, {stats.rate} a second</dd>
-            {#if stats.core_pct != null}<dt>CPU</dt><dd>{stats.core_pct.toFixed(1)}% of one core</dd>{/if}
+            {#if stats.core_pct != null}<dt>CPU</dt><dd>{stats.core_pct.toFixed(1)}% of one core{#if stats.worker_pct != null && stats.app_pct != null}<small>models {stats.worker_pct.toFixed(1)}%, camera and app {stats.app_pct.toFixed(1)}%</small>{/if}</dd>{/if}
             <dt>Minimised</dt><dd class:yes={minutesHidden >= 60}>{duration(stats.hidden_secs)} of 60 min, {stats.hidden_checks} checks</dd>
             <dt>Longest gap</dt><dd class:warn={stats.longest_gap > 3}>{stats.longest_gap.toFixed(1)} s</dd>
           </dl>
@@ -321,6 +321,7 @@
   svg circle { fill: #f3ead8; }
   .dot { position: absolute; top: 10px; right: 10px; width: 10px; height: 10px; border-radius: 50%; background: #e05a4f; box-shadow: 0 0 0 3px rgb(0 0 0 / 0.35); }
   .stats { padding-top: 8px; border-top: 1px solid var(--line); }
+  .stats small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
   .log li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .log li span:last-child { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
 </style>

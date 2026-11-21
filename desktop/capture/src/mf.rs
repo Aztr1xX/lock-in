@@ -80,7 +80,17 @@ pub struct Camera {
     width: u32,
     height: u32,
     stride: i32,
+    format: Format,
     latest: Option<IMFSample>,
+}
+
+/// What the frames arrive as. YUY2 and NV12 come straight from the camera and only the checked
+/// frame is converted (see yuv.rs); anything else is converted to RGB32 by Media Foundation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Rgb32,
+    Yuy2,
+    Nv12,
 }
 
 /// Shuts the camera down from another thread, which also wakes a read that is waiting for a
@@ -126,7 +136,7 @@ impl Camera {
                     return Err(CaptureError::Busy(e.message().to_string()));
                 }
             };
-            let mut cam = Camera { source, reader, width: 0, height: 0, stride: 0, latest: None };
+            let mut cam = Camera { source, reader, width: 0, height: 0, stride: 0, format: Format::Rgb32, latest: None };
             cam.configure(width, height)?;
             Ok(cam)
         }
@@ -162,19 +172,29 @@ impl Camera {
             score += fps.map(|f| ((f - 15.0).max(0.0) / 15.0) * 0.1).unwrap_or(0.0);
             if sub == MFVideoFormat_MJPG {
                 score += 0.3; // decoding JPEG costs CPU
+            } else if sub != MFVideoFormat_YUY2 && sub != MFVideoFormat_NV12 {
+                score += 0.1; // needs Media Foundation to convert every frame
             }
             if best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
                 best = Some((score, t));
             }
         }
+        self.format = Format::Rgb32;
         if let Some((_, native)) = &best {
             r.SetCurrentMediaType(STREAM, None, native)?;
+            let sub = native.GetGUID(&MF_MT_SUBTYPE).unwrap_or_default();
+            if sub == MFVideoFormat_YUY2 {
+                self.format = Format::Yuy2;
+            } else if sub == MFVideoFormat_NV12 {
+                self.format = Format::Nv12;
+            }
         }
-
-        let out = MFCreateMediaType()?;
-        out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-        out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
-        r.SetCurrentMediaType(STREAM, None, &out)?;
+        if self.format == Format::Rgb32 {
+            let out = MFCreateMediaType()?;
+            out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+            out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
+            r.SetCurrentMediaType(STREAM, None, &out)?;
+        }
         self.read_size()
     }
 
@@ -183,7 +203,12 @@ impl Camera {
         let (w, h) = split(t.GetUINT64(&MF_MT_FRAME_SIZE)?);
         self.width = w;
         self.height = h;
-        self.stride = t.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32).unwrap_or((w * 4) as i32);
+        let bytes_per_px = match self.format {
+            Format::Rgb32 => 4,
+            Format::Yuy2 => 2,
+            Format::Nv12 => 1,
+        };
+        self.stride = t.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32).unwrap_or((w * bytes_per_px) as i32);
         Ok(())
     }
 
@@ -240,6 +265,46 @@ impl Camera {
     unsafe fn convert(&self, sample: &IMFSample) -> Result<Frame, CaptureError> {
         let (w, h) = (self.width as usize, self.height as usize);
         let buffer = sample.ConvertToContiguousBuffer()?;
+        if self.format != Format::Rgb32 {
+            // YUV frames are top-down; the 2D lock gives the real row pitch when there is one.
+            let (mut p, mut len) = (std::ptr::null_mut(), 0u32);
+            let mut pitch = self.stride.unsigned_abs() as usize;
+            let b2 = buffer.cast::<IMF2DBuffer>().ok();
+            let locked2d = match &b2 {
+                Some(b) => {
+                    let mut pp = 0i32;
+                    if b.Lock2D(&mut p, &mut pp).is_ok() && pp > 0 {
+                        pitch = pp as usize;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => false,
+            };
+            if !locked2d {
+                buffer.Lock(&mut p, None, Some(&mut len))?;
+            }
+            let need = match self.format {
+                Format::Yuy2 => pitch * h,
+                _ => pitch * h * 3 / 2,
+            };
+            if !locked2d && (len as usize) < need {
+                buffer.Unlock()?;
+                return Err(CaptureError::Other("the camera sent a short frame".into()));
+            }
+            let src = std::slice::from_raw_parts(p as *const u8, need);
+            let rgb = match self.format {
+                Format::Yuy2 => crate::yuv::yuy2_to_rgb(src, pitch, w, h),
+                _ => crate::yuv::nv12_to_rgb(src, pitch, w, h),
+            };
+            if locked2d {
+                b2.as_ref().unwrap().Unlock2D()?;
+            } else {
+                buffer.Unlock()?;
+            }
+            return rgb.map(|rgb| Frame { width: self.width, height: self.height, rgb }).ok_or_else(|| CaptureError::Other("the camera sent a frame of an odd size".into()));
+        }
         let mut rgb = vec![0u8; w * h * 3];
         // Copies BGRX rows into RGB. `top` is the first row on screen; `pitch` may be negative
         // when the picture is stored bottom-up.
