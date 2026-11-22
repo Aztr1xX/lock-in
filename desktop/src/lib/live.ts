@@ -115,10 +115,11 @@ export function preferred(cams: Camera[], saved: string): Camera | null {
 }
 
 /**
- * The detector the app uses unless you pick another. Chosen from the speed test: the fastest
- * Apache 2.0 model that fits the time budget without a graphics chip.
+ * The detector the app uses unless you pick another: Lock In's own, NanoDet-Plus retrained on
+ * phones, tablets and drinks (camera plan, step 4). NanoDet-Plus was the fastest Apache 2.0 model
+ * that fits the time budget without a graphics chip, and stays as the fallback.
  */
-export const DEFAULT_CHECK = "NanoDet-Plus";
+export const DEFAULT_CHECK = "Lock In detector";
 
 export const duration = (s: number) => {
   s = Math.round(s);

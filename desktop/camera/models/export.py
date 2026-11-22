@@ -314,7 +314,8 @@ def nanodet():
 
 # Lock In's own detector (camera plan, step 4), trained by .github/workflows/camera-train.yml and
 # published to a pre-release of this repository with its test against NanoDet-Plus. Taken up only
-# once that test says it's better.
+# once that test says it's better, with the phone score the test matched to NanoDet-Plus's 0.4
+# (round two, 2026-11-22: 0.55).
 LOCKIN_TAG = "camera-models-lockin-1"
 LOCKIN_CLASSES = ["person", "cell phone", "tablet", "cup"]
 

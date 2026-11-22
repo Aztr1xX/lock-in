@@ -108,7 +108,14 @@
 
   onMount(() => {
     load();
-    listChecks().then((c) => (checks = c)).catch(() => {});
+    listChecks()
+      .then((c) => {
+        checks = c;
+        // Lock In's detector against the one it was trained from, when both are there.
+        const both = c.filter((x) => x === DEFAULT_CHECK || x === "NanoDet-Plus");
+        picked = both.length ? both : c.slice(0, 1);
+      })
+      .catch(() => {});
     const un = [
       onClipProgress((p) => {
         if (rec && rec.id === p.id) {
