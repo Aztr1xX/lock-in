@@ -146,6 +146,13 @@ def fetch_image(url: str):
     return None
 
 
+def fetch_all(pool: ThreadPoolExecutor, urls, chunk=400):
+    """The pictures at these urls, in order, downloaded a chunk at a time: pool.map on its own
+    downloads far faster than they're saved, and holds every waiting picture in memory."""
+    for i in range(0, len(urls), chunk):
+        yield from pool.map(fetch_image, urls[i : i + chunk])
+
+
 class Writer:
     """Collects pictures and boxes into COCO-format sets."""
 
@@ -260,7 +267,7 @@ def open_images(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExec
     jobs += [(split, "train", iid, boxes, None) for split, iid, boxes in lookalikes]
     log(f"  look-alikes with no phone: {len(lookalikes)}")
     log(f"Downloading {len(jobs)} Open Images pictures...")
-    imgs = pool.map(lambda j: fetch_image(OI_IMAGES.format(split=j[0], id=j[2])), jobs)
+    imgs = fetch_all(pool, [OI_IMAGES.format(split=j[0], id=j[2]) for j in jobs])
     got = 0
     for (split, dest, iid, boxes, info), img in zip(jobs, imgs):
         if img is None:
@@ -310,7 +317,7 @@ def coco(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExecutor):
     per = {i: per[i] for i in keep}
     imgs = {i: imgs[i] for i in keep}
     del d, z  # several GB of annotations, no longer needed while the pictures come in
-    pics = pool.map(lambda i: fetch_image(COCO_IMAGES.format(imgs[i]["file_name"])), jobs)
+    pics = fetch_all(pool, [COCO_IMAGES.format(imgs[i]["file_name"]) for i in jobs])
     for iid, img in zip(jobs, pics):
         if img is None:
             continue
