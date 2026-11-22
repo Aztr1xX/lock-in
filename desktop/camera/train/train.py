@@ -4,7 +4,9 @@ drink), starting from weights.py's COCO start. Runs on the CPU.
 Stops by itself after --hours, keeping the last finished epoch, and carries on from there when run
 again with the same --out (GitHub's machines allow 6 hours a run).
 
-    python train.py --nanodet nanodet-src --data data --start start.ckpt --out run [--epochs 12] [--hours 5.2]
+    python train.py --nanodet nanodet-src --data data --start start.ckpt --out run [--epochs 12] [--hours 5.2] [--lr 0.0004]
+
+--start is weights.py's COCO start, or an earlier run's model_best.ckpt to build on it.
 """
 
 import argparse
@@ -24,6 +26,8 @@ def main():
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--hours", type=float, default=5.2)
     p.add_argument("--size", type=int, default=416)
+    p.add_argument("--lr", type=float, default=0.0004, help="lower when carrying on from an already trained detector")
+    p.add_argument("--warmup", type=int, default=300)
     a = p.parse_args()
     sys.path.insert(0, a.nanodet)
 
@@ -68,8 +72,8 @@ def main():
     cfg.device.batchsize_per_gpu = a.batch
     s = cfg.schedule
     s.load_model = str(Path(a.start).resolve())
-    s.optimizer.lr = 0.0004  # the COCO run's 0.001 at batch 96, scaled to batch 32 and eased for fine-tuning
-    s.warmup.steps = 300
+    s.optimizer.lr = a.lr  # default: the COCO run's 0.001 at batch 96, scaled to batch 32 and eased for fine-tuning
+    s.warmup.steps = a.warmup
     s.total_epochs = a.epochs
     s.lr_schedule.T_max = a.epochs
     s.lr_schedule.eta_min = 0.00002

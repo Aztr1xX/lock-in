@@ -332,13 +332,18 @@ def lockin():
     if report is None:
         print("  not trained yet; skipped")
         return
-    if "NOT better" in report.read_text():
+    numbers = lockin_fetch("evaluation.json")
+    test = json.loads(numbers.read_text()) if numbers else {}
+    if "NOT better" in report.read_text() or not test.get("better"):
         print("  trained, but its test says it isn't better than NanoDet-Plus; skipped")
         return
+    # Its scores aren't the COCO model's: the test found the phone score that matches 0.4 there.
+    phone_score = float(test["phone_score"])
+    print(f"  phone at a score of {phone_score:.2f}")
     for size in (416, 320):
         src = lockin_fetch(f"lockin-det-{size}.onnx")
         assert src is not None, f"lockin-det-{size}.onnx is missing from {LOCKIN_TAG}"
-        add(f"lockin-det-{size}", src, "nanodet", size, "Lock In detector", "Apache-2.0", classes=LOCKIN_CLASSES)
+        add(f"lockin-det-{size}", src, "nanodet", size, "Lock In detector", "Apache-2.0", classes=LOCKIN_CLASSES, phone_score=phone_score)
     # Reference: the same NanoDet-Plus pipeline as above, with 4 classes.
     H = W = 416
     x = cv2.resize(BUS_BGR, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)

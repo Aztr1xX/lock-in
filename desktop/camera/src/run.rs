@@ -211,7 +211,7 @@ impl Models {
             "type": "frame",
             "people": people.len(),
             "person": biggest,
-            "phone": phone.map(|d| json!({ "score": d.score, "box": d.box_, "near_wrist": near_wrist(d.box_), "long_side_shoulders": shoulder_w.map(|s| long_side(d.box_) / s) })),
+            "phone": phone.map(|d| json!({ "score": vision::phone_scale(d.score, self.detector.0.phone_score), "box": d.box_, "near_wrist": near_wrist(d.box_), "long_side_shoulders": shoulder_w.map(|s| long_side(d.box_) / s) })),
             "tablet": tablet.map(|d| json!({ "score": d.score, "box": d.box_ })),
             "drink": drink.map(|d| json!({ "score": d.score, "box": d.box_, "near_wrist": near_wrist(d.box_) })),
             "keypoints": keypoints.iter().map(|k| [round1(k.x), round1(k.y), (k.score * 100.0).round() / 100.0]).collect::<Vec<_>>(),

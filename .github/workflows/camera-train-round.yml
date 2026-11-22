@@ -25,7 +25,12 @@ env:
   COCO_ONNX: https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-plus-m_416.onnx
   STATE_TAG: camera-train-state
   MODELS_TAG: camera-models-lockin-1
-  EPOCHS: 8
+  # Round two builds on round one's detector (its saved progress, below) with phone look-alikes
+  # added, so it needs fewer epochs and a gentler learning rate. Empty BUILD_ON starts from COCO.
+  BUILD_ON: state-d2161bbdf06e0-e8.tar.gz
+  EPOCHS: 3
+  LR: "0.0002"
+  WARMUP: 100
   # Minutes from the start of the run until training must stop, leaving time to save and test.
   TRAIN_BUDGET_MIN: 290
   GH_TOKEN: ${{ github.token }}
@@ -57,13 +62,12 @@ jobs:
           git clone -q https://github.com/RangiLyu/nanodet nanodet-src
           git -C nanodet-src checkout -q "$NANODET_SHA"
 
-      # Only what makes saved progress useless (other pictures, another start, another length) is in
-      # the key, so a fix to train.py carries on. OLD_KEY is the progress saved before that rule.
+      # Only what makes saved progress useless (other pictures, another start, another length or
+      # learning rate) is in the key, so a fix to train.py carries on.
       - name: Training key (changes when the pictures, the start or the length changes)
         run: |
-          key=$(cat desktop/camera/train/data.py desktop/camera/train/weights.py | sha256sum | cut -c1-12)
+          key=$( { cat desktop/camera/train/data.py desktop/camera/train/weights.py; echo "$BUILD_ON $LR $WARMUP"; } | sha256sum | cut -c1-12)
           echo "KEY=d$key-e$EPOCHS" >> "$GITHUB_ENV"
-          echo "OLD_KEY=9da5b83646c6-e8" >> "$GITHUB_ENV"
 
       - name: Restore the pictures
         id: data
@@ -86,18 +90,25 @@ jobs:
       - name: Pick up where the last run stopped
         run: |
           mkdir -p run
-          if [ "${{ inputs.fresh }}" != "true" ] && { gh release download "$STATE_TAG" -p "state-$KEY.tar.gz" -D . --repo "$GITHUB_REPOSITORY" 2>/dev/null \
-              || { gh release download "$STATE_TAG" -p "state-$OLD_KEY.tar.gz" -O "state-$KEY.tar.gz" --repo "$GITHUB_REPOSITORY" 2>/dev/null && echo "From the earlier save"; }; }; then
+          if [ "${{ inputs.fresh }}" != "true" ] && gh release download "$STATE_TAG" -p "state-$KEY.tar.gz" -D . --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
             tar xzf "state-$KEY.tar.gz"
             echo "Carrying on: $(head -1 run/status.txt 2>/dev/null)"
           else
             echo "Starting fresh"
           fi
 
-      - name: Start from the COCO weights
+      - name: The detector to start from
         run: |
-          curl -sSLf -o coco.ckpt "$COCO_CKPT"
-          python desktop/camera/train/weights.py coco.ckpt start.ckpt
+          if [ -n "$BUILD_ON" ]; then
+            mkdir -p prev
+            gh release download "$STATE_TAG" -p "$BUILD_ON" -D prev --repo "$GITHUB_REPOSITORY"
+            tar xzf "prev/$BUILD_ON" -C prev
+            cp prev/run/model_best/model_best.ckpt start.ckpt
+            echo "Building on $BUILD_ON: $(head -1 prev/run/model_best/eval_results.txt 2>/dev/null)"
+          else
+            curl -sSLf -o coco.ckpt "$COCO_CKPT"
+            python desktop/camera/train/weights.py coco.ckpt start.ckpt
+          fi
 
       - name: Train
         id: train
@@ -105,7 +116,7 @@ jobs:
           left=$(( TRAIN_BUDGET_MIN * 60 - ($(date +%s) - START) ))
           hours=$(python -c "print(max(0.1, $left / 3600))")
           echo "Training for up to $hours hours"
-          python desktop/camera/train/train.py --nanodet nanodet-src --data data --start start.ckpt --out run --epochs "$EPOCHS" --hours "$hours"
+          python desktop/camera/train/train.py --nanodet nanodet-src --data data --start start.ckpt --out run --epochs "$EPOCHS" --hours "$hours" --lr "$LR" --warmup "$WARMUP"
           cat run/status.txt
           if grep -q '^done' run/status.txt; then echo "DONE=1" >> "$GITHUB_ENV"; echo "done=1" >> "$GITHUB_OUTPUT"; fi
 
@@ -130,7 +141,9 @@ jobs:
         continue-on-error: true
         run: |
           curl -sSLf -o coco.onnx "$COCO_ONNX"
-          python desktop/camera/train/evaluate.py --data data --new out/lockin-det-416.onnx --base coco.onnx --out report || echo "VERDICT=worse" >> "$GITHUB_ENV"
+          prev=""
+          if gh release download "$MODELS_TAG" -p lockin-det-416.onnx -O prev-det-416.onnx --repo "$GITHUB_REPOSITORY" 2>/dev/null; then prev="--prev prev-det-416.onnx"; fi
+          python desktop/camera/train/evaluate.py --data data --new out/lockin-det-416.onnx --base coco.onnx --out report $prev || echo "VERDICT=worse" >> "$GITHUB_ENV"
           { echo "### Lock In detector vs NanoDet-Plus (COCO)"; echo; cat report/evaluation.md; echo; grep -h "mAP\|class" -m 20 run/logs-*/*.txt | tail -6 || true; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the model and its test

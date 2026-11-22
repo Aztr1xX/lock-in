@@ -29,6 +29,25 @@ pub struct ModelInfo {
     /// than COCO's 80 (Lock In's own: person, cell phone, tablet, cup).
     #[serde(default)]
     pub classes: Vec<String>,
+    /// The phone score at which this detector raises no more false alarms than the COCO model at
+    /// 0.4 (from its test). Its phone scores are put on the COCO model's scale with phone_scale.
+    #[serde(default)]
+    pub phone_score: Option<f32>,
+}
+
+/// A phone score on the COCO model's scale, where the app counts a phone at 0.4: this detector's
+/// own `phone_score` maps to 0.4, and 0 and 1 stay where they are.
+pub fn phone_scale(score: f32, phone_score: Option<f32>) -> f32 {
+    match phone_score {
+        Some(at) if at > 0.0 && at < 1.0 => {
+            if score < at {
+                0.4 * score / at
+            } else {
+                0.4 + 0.6 * (score - at) / (1.0 - at)
+            }
+        }
+        _ => score,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -605,6 +624,16 @@ pub fn iou(a: [f32; 4], b: [f32; 4]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn phone_scores_move_to_the_coco_scale() {
+        use super::phone_scale;
+        assert_eq!(phone_scale(0.5, None), 0.5);
+        assert!((phone_scale(0.65, Some(0.65)) - 0.4).abs() < 1e-6);
+        assert!((phone_scale(1.0, Some(0.65)) - 1.0).abs() < 1e-6);
+        assert!((phone_scale(0.325, Some(0.65)) - 0.2).abs() < 1e-6);
+        assert!(phone_scale(0.6, Some(0.65)) < 0.4 && phone_scale(0.7, Some(0.65)) > 0.4);
+    }
+
     use super::*;
 
     fn info(family: Family, w: u32, h: u32) -> ModelInfo {
@@ -621,6 +650,7 @@ mod tests {
             cpu_only: false,
             timing_only: false,
             classes: Vec::new(),
+            phone_score: None,
         }
     }
 

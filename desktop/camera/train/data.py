@@ -5,6 +5,9 @@ Four classes: person, phone, tablet, drink. Sources, all public:
     computers, coffee cups, mugs and bottles, with the people in the same pictures.
   * COCO 2017 (annotations CC BY 4.0), when reachable: every picture with a cell phone, some with
     cups and bottles, and some with only people, so the detector keeps finding people well.
+  * Look-alikes with no phone, from both: laptops, keyboards, books, remotes, calculators, screens.
+    Without them the detector learns "a flat dark rectangle is a phone" and calls keyboards and
+    book covers phones.
 
 Every picture is shrunk to at most 640 px and saved as JPEG. About 30% of the training
 pictures also get a second, webcam-style copy: dim, noisy, blurred like NVIDIA Broadcast's
@@ -60,10 +63,25 @@ OI_LABELS = {
 }
 # Desks without phones, for counting false alarms in the test set.
 OI_DESK = {"/m/01c648", "/m/0bt_c3", "/m/01y9k5"}  # Laptop, Book, Desk
+# Phone look-alikes, trained on as pictures with no phone (only their people and drinks boxed).
+OI_LOOKALIKE = OI_DESK | {
+    "/m/01m2v",  # Computer keyboard
+    "/m/024d2",  # Calculator
+    "/m/02522",  # Computer monitor
+    "/m/020lf",  # Computer mouse
+    "/m/0qjjc",  # Remote control
+    "/m/07c52",  # Television
+    "/m/06z37_",  # Picture frame
+    "/m/03__z0",  # Bookcase
+}
+# A picture with one of these may hold a phone boxed only as something else, so it's never a look-alike.
+OI_MAYBE_PHONE = {"/m/07cx4", "/m/0mcx2"}  # Telephone, Ipod
+LOOKALIKES = 3000  # Open Images look-alike pictures; COCO adds up to 2500 more
 
 COCO_ANN = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
 COCO_IMAGES = "http://images.cocodataset.org/train2017/{}"
 COCO_LABELS = {1: "person", 77: "phone", 41: "drink", 44: "drink", 46: "drink"}  # person, cell phone, bottle, wine glass, cup
+COCO_LOOKALIKE = {72, 73, 74, 75, 76, 84}  # tv, laptop, mouse, remote, keyboard, book
 
 MAX_SIDE = 640
 CAM_SHARE = 0.3  # share of training pictures that also get a webcam-style copy
@@ -187,9 +205,14 @@ def open_images(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExec
     caps = {"phone": 60, "tablet": 30, "drink": 60} if small else {"phone": 100000, "tablet": 100000, "drink": 2500}
     wanted = set(OI_LABELS) | OI_DESK
     jobs = []  # (split, set, id, boxes, info)
+    lookalikes = []  # training pictures with phone look-alikes and no phone
     for split in (["validation"] if small else ["train", "validation", "test"]):
         log(f"Reading Open Images {split} boxes...")
-        per = read_boxes(split, wanted)
+        everything = read_boxes(split, wanted | OI_LOOKALIKE | OI_MAYBE_PHONE)
+        # The test pictures are picked from exactly the same list as before look-alikes were added,
+        # so a newer detector is tested on the same pictures.
+        per = {i: [b for b in rows if b[0] in wanted] for i, rows in everything.items()}
+        per = {i: rows for i, rows in per.items() if rows}
         ids = sorted(per)
         rng.shuffle(ids)
         taken = defaultdict(int)
@@ -221,6 +244,24 @@ def open_images(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExec
                 taken[key] += 1
             jobs.append((split, "test" if test else "train", iid, boxes, {"phone": "phone" in has, "tablet": "tablet" in has, "desk": False} if test else None))
         log(f"  {split}: training pictures {dict(taken)}")
+        if split == "train" or small:
+            lookalikes += [(split, iid, everything[iid]) for iid in sorted(everything)]
+    # Look-alikes: only from training pictures that aren't held back, with no phone or tablet.
+    pick = random.Random(13)
+    pick.shuffle(lookalikes)
+    n = 0
+    for split, iid, rows in lookalikes:
+        if n >= (40 if small else LOOKALIKES):
+            break
+        labels = {b[0] for b in rows}
+        if held_out(iid) or not labels & OI_LOOKALIKE or labels & OI_MAYBE_PHONE:
+            continue
+        boxes = usable([b for b in rows if b[0] in OI_LABELS])
+        if boxes is None or {"phone", "tablet"} & {c for c, *_ in boxes}:
+            continue
+        n += 1
+        jobs.append((split, "train", iid, boxes, None))
+    log(f"  look-alikes with no phone: {n}")
     log(f"Downloading {len(jobs)} Open Images pictures...")
     imgs = pool.map(lambda j: fetch_image(OI_IMAGES.format(split=j[0], id=j[2])), jobs)
     got = 0
@@ -250,17 +291,19 @@ def coco(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExecutor):
         if a["category_id"] in COCO_LABELS and not a["iscrowd"]:
             per[a["image_id"]].append(a)
     crowd = {a["image_id"] for a in d["annotations"] if a["iscrowd"] and a["category_id"] in COCO_LABELS}
+    alike = {a["image_id"] for a in d["annotations"] if a["category_id"] in COCO_LOOKALIKE}
     imgs = {i["id"]: i for i in d["images"]}
-    ids = sorted(per)
+    ids = sorted(set(per) | alike)
     rng.shuffle(ids)
-    caps = {"phone": 40, "drink": 20, "person": 20} if small else {"phone": 100000, "drink": 1000, "person": 1000}
+    caps = {"phone": 40, "drink": 20, "person": 20, "look-alike": 20} if small else {"phone": 100000, "drink": 1000, "person": 1000, "look-alike": 2500}
     taken = defaultdict(int)
     jobs = []
     for iid in ids:
         if iid in crowd:
             continue
         has = {COCO_LABELS[a["category_id"]] for a in per[iid]}
-        key = "phone" if "phone" in has else "drink" if "drink" in has else "person"
+        # COCO boxes every phone, so a look-alike picture without a phone box truly has none.
+        key = "phone" if "phone" in has else "look-alike" if iid in alike else "drink" if "drink" in has else "person"
         if taken[key] >= caps[key]:
             continue
         taken[key] += 1
