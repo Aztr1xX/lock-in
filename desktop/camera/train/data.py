@@ -245,23 +245,20 @@ def open_images(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExec
             jobs.append((split, "test" if test else "train", iid, boxes, {"phone": "phone" in has, "tablet": "tablet" in has, "desk": False} if test else None))
         log(f"  {split}: training pictures {dict(taken)}")
         if split == "train" or small:
-            lookalikes += [(split, iid, everything[iid]) for iid in sorted(everything)]
-    # Look-alikes: only from training pictures that aren't held back, with no phone or tablet.
-    pick = random.Random(13)
-    pick.shuffle(lookalikes)
-    n = 0
-    for split, iid, rows in lookalikes:
-        if n >= (40 if small else LOOKALIKES):
-            break
-        labels = {b[0] for b in rows}
-        if held_out(iid) or not labels & OI_LOOKALIKE or labels & OI_MAYBE_PHONE:
-            continue
-        boxes = usable([b for b in rows if b[0] in OI_LABELS])
-        if boxes is None or {"phone", "tablet"} & {c for c, *_ in boxes}:
-            continue
-        n += 1
-        jobs.append((split, "train", iid, boxes, None))
-    log(f"  look-alikes with no phone: {n}")
+            # Look-alikes: only training pictures that aren't held back, with no phone or tablet.
+            # Only their few usable boxes are kept: the whole train list doesn't fit in memory twice.
+            for iid in sorted(everything):
+                labels = {b[0] for b in everything[iid]}
+                if held_out(iid) or not labels & OI_LOOKALIKE or labels & OI_MAYBE_PHONE:
+                    continue
+                boxes = usable([b for b in everything[iid] if b[0] in OI_LABELS])
+                if boxes is not None and not {"phone", "tablet"} & {c for c, *_ in boxes}:
+                    lookalikes.append((split, iid, boxes))
+        del everything, per
+    random.Random(13).shuffle(lookalikes)
+    lookalikes = lookalikes[: 40 if small else LOOKALIKES]
+    jobs += [(split, "train", iid, boxes, None) for split, iid, boxes in lookalikes]
+    log(f"  look-alikes with no phone: {len(lookalikes)}")
     log(f"Downloading {len(jobs)} Open Images pictures...")
     imgs = pool.map(lambda j: fetch_image(OI_IMAGES.format(split=j[0], id=j[2])), jobs)
     got = 0
@@ -309,6 +306,10 @@ def coco(w: Writer, small: bool, rng: random.Random, pool: ThreadPoolExecutor):
         taken[key] += 1
         jobs.append(iid)
     log(f"  COCO training pictures {dict(taken)}; downloading...")
+    keep = set(jobs)
+    per = {i: per[i] for i in keep}
+    imgs = {i: imgs[i] for i in keep}
+    del d, z  # several GB of annotations, no longer needed while the pictures come in
     pics = pool.map(lambda i: fetch_image(COCO_IMAGES.format(imgs[i]["file_name"])), jobs)
     for iid, img in zip(jobs, pics):
         if img is None:
